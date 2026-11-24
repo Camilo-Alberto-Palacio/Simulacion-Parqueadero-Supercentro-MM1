@@ -1,0 +1,8 @@
+# Dependencias del Proyecto: Simulación de Colas M/M/1 - Parqueaderos Centro Comercial Supercentro
+# Actividad Didáctica 2-M4 - Módulo 4
+
+numpy>=1.24.0
+pandas>=2.0.0
+matplotlib>=3.7.0
+python-docx>=1.1.0
+jupyter>=1.0.0

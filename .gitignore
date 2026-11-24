@@ -1,0 +1,29 @@
+# Entornos virtuales
+venv/
+.venv/
+env/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Temporales Office / OS / IDE
+~$*.docx
+~$*.doc
+.vscode/
+.idea/
+.env
+*.log
+.DS_Store
+Thumbs.db
+
+# Material de referencia local (guía Canvas y capturas)
+S30 - Módulo 4*.pdf
+*Recording*
+*AAA*
+SEMANA*/
+Revisiones*/
