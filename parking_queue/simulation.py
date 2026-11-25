@@ -1,34 +1,35 @@
 """
 Motor de Simulación de Eventos Discretos (DES) para el Sistema de Pago de Parqueaderos
-del Centro Comercial Supercentro (Cajeros Independientes M/M/1 y Extensión M/G/1).
+del Centro Comercial Supercentro (Perfiles Aislados M/M/1 y Mezcla Hiperexponencial M/H4/1).
 
 Implementa:
-- Simulación fiel sobre horizonte de 1000 minutos por réplica con Números Aleatorios
-  Comunes (CRN) y generador reproducible PCG64.
-- Modos de enrutamiento: 'random_mm1' (descomposición equiprobable M/M/1),
-  'shortest_queue' (JSQ observable no clarividente con deque) y 'least_work'.
-- Detección automática del número total de réplicas N* mediante convergencia al
-  estado estable del promedio acumulado y cota de Error Relativo ER%.
-- Cálculo piloto (n0=10) con algoritmo de 8 pasos y cuantiles exactos t de Student.
-- Eliminación del período transitorio (warm-up) con promedio móvil (antes vs. después).
-- Protocolo integral de Verificación, Calibración y Validación (V&V) sin dependencias externas.
+- Simulación fiel sobre horizonte operativo de 1000 minutos con Números Aleatorios
+  Comunes (CRN) y SeedSequence aislada sobre generador reproducible PCG64.
+- Modos de enrutamiento: 'random_mm1' (descomposición equiprobable 1/k),
+  'shortest_queue' (JSQ observable no clarividente), 'single_queue_mgc' (fila única M/G/c)
+  y 'least_work' (cota clarividente).
+- Detección causal (sin look-ahead) de réplicas N* mediante regla secuencial de Law & Kelton
+  combinada con estabilidad de ventana causal móvil.
+- Eliminación del período transitorio mediante regla MSER-5 y media móvil centrada de Welch.
+- Integración continua evento a evento de Q(t) y L(t) para verificación genuina de Ley de Little,
+  validación estacionaria larga (5000 min), IC pareados CRN y sensibilidad extendida.
 """
 
 from collections import deque
 import math
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
 from .model import (
     ROLE_ALLOWED_TYPES,
     SCENARIO_DEFINITIONS,
-    SERVICE_MEANS,
     SIM_MINUTES,
     USER_TYPES,
     ArrivalVehicle,
     ParkingQueuingModel,
     classify_utilization_regime,
+    replica_stream_seed,
 )
 
 
@@ -137,10 +138,49 @@ class ParkingSimulationEngine:
 
     @staticmethod
     def _effective_service_time(vehicle: ArrivalVehicle, ux_factor_slow: float) -> float:
-        """Retorna el tiempo de servicio efectivo aplicando el factor UX si corresponde."""
+        """Retorna el tiempo de servicio efectivo escalando base_service_time según el factor UX."""
         if ux_factor_slow == 1.0 or vehicle.user_type not in ("Lento", "Muy lento"):
             return vehicle.base_service_time
-        return vehicle.unit_service_exp * (SERVICE_MEANS[vehicle.user_type] * ux_factor_slow)
+        return vehicle.base_service_time * ux_factor_slow
+
+    @staticmethod
+    def _integrate_occupancy_areas(
+        intervals: List[Tuple[float, float, float]],
+        horizon_eff: float,
+    ) -> Tuple[float, float]:
+        """
+        Integra en tiempo continuo las trayectorias paso a paso Q(t) (en fila) y L(t)
+        (en sistema) mediante barrido cronológico de eventos sobre [0, horizon_eff].
+        Provee una auditoría independiente de Ley de Little frente a sum(Wq)/H.
+        """
+        if not intervals or horizon_eff <= 0.0:
+            return 0.0, 0.0
+
+        q_events: List[Tuple[float, int]] = []
+        l_events: List[Tuple[float, int]] = []
+        for arr_t, start_t, end_t in intervals:
+            if start_t > arr_t:
+                q_events.append((arr_t, 1))
+                q_events.append((start_t, -1))
+            if end_t > arr_t:
+                l_events.append((arr_t, 1))
+                l_events.append((end_t, -1))
+
+        def _sweep(events: List[Tuple[float, int]]) -> float:
+            if not events:
+                return 0.0
+            events.sort(key=lambda e: (e[0], e[1]))
+            area = 0.0
+            count = 0
+            prev_t = 0.0
+            for t_ev, delta in events:
+                if t_ev > prev_t and count > 0:
+                    area += count * (t_ev - prev_t)
+                prev_t = t_ev
+                count += delta
+            return area
+
+        return _sweep(q_events) / horizon_eff, _sweep(l_events) / horizon_eff
 
     @staticmethod
     def _aggregate_by_type(
@@ -203,6 +243,8 @@ class ParkingSimulationEngine:
                 "idle_pct": 100.0,
                 "lq_empirical": 0.0,
                 "l_empirical": 0.0,
+                "little_lq_err": 0.0,
+                "little_l_err": 0.0,
                 "horizon_effective": horizon_minutes,
                 "counts_by_type": {u: 0 for u in USER_TYPES},
             }
@@ -213,6 +255,7 @@ class ParkingSimulationEngine:
         wait_times = np.empty(n, dtype=float)
         service_times = np.empty(n, dtype=float)
         system_times = np.empty(n, dtype=float)
+        intervals: List[Tuple[float, float, float]] = []
         counts_by_type = {u: 0 for u in USER_TYPES}
         records: List[Tuple[str, float, float, float]] = []
 
@@ -229,6 +272,7 @@ class ParkingSimulationEngine:
             wait_times[idx] = wait
             service_times[idx] = srv_time
             system_times[idx] = sys_time
+            intervals.append((veh.arrival_time, start_time, end_time))
 
             if include_records:
                 records.append((veh.user_type, wait, srv_time, sys_time))
@@ -239,14 +283,16 @@ class ParkingSimulationEngine:
 
         horizon_eff = max(horizon_minutes, free_time)
         total_busy = float(np.sum(service_times))
-        total_wait = float(np.sum(wait_times))
-        total_sys = float(np.sum(system_times))
+        mean_wq = float(np.mean(wait_times))
+        mean_w = float(np.mean(system_times))
+        lq_emp, l_emp = ParkingSimulationEngine._integrate_occupancy_areas(intervals, horizon_eff)
+        lam_eff = n / horizon_eff
 
         res = {
             "total_customers": n,
             "completed_in_horizon": completed_in_horizon,
             "overtime_customers": n - completed_in_horizon,
-            "mean_wait_wq": float(np.mean(wait_times)),
+            "mean_wait_wq": mean_wq,
             "std_wait_wq": float(np.std(wait_times, ddof=1)) if n > 1 else 0.0,
             "p95_wait_wq": float(np.percentile(wait_times, 95)),
             "max_wait_wq": float(np.max(wait_times)),
@@ -255,12 +301,14 @@ class ParkingSimulationEngine:
             "std_service_s": float(np.std(service_times, ddof=1)) if n > 1 else 0.0,
             "min_service_s": float(np.min(service_times)),
             "max_service_s": float(np.max(service_times)),
-            "mean_system_w": float(np.mean(system_times)),
+            "mean_system_w": mean_w,
             "std_system_w": float(np.std(system_times, ddof=1)) if n > 1 else 0.0,
             "utilization_rho": total_busy / horizon_eff,
             "idle_pct": max(0.0, (1.0 - total_busy / horizon_eff) * 100.0),
-            "lq_empirical": total_wait / horizon_eff,
-            "l_empirical": total_sys / horizon_eff,
+            "lq_empirical": lq_emp,
+            "l_empirical": l_emp,
+            "little_lq_err": abs(lq_emp - lam_eff * mean_wq),
+            "little_l_err": abs(l_emp - lam_eff * mean_w),
             "horizon_effective": horizon_eff,
             "counts_by_type": counts_by_type,
         }
@@ -274,20 +322,23 @@ class ParkingSimulationEngine:
         arrivals: List[ArrivalVehicle],
         routing_seed: int,
         routing_mode: str = "random_mm1",
+        scenarios: Optional[Dict[str, Dict[str, object]]] = None,
     ) -> Dict[str, object]:
         """
-        Simula una réplica completa (1000 min) para el escenario especificado.
+        Simula una réplica completa para el escenario especificado.
 
         routing_mode:
-          - 'random_mm1': Asignación equiprobable (1/k) entre cajeros elegibles
-            manteniendo colas independientes M/M/1.
-          - 'shortest_queue': Join-the-Shortest-Queue (JSQ observable no clarividente)
-            basado en longitud de fila presente en cola o servicio.
+          - 'random_mm1': Asignación equiprobable (1/k) entre cajeros elegibles (colas paralelas).
+          - 'shortest_queue': Join-the-Shortest-Queue (JSQ observable no clarividente con deque).
+          - 'single_queue_mgc': Cola única serpentina FCFS M/G/c por piscina de servidores elegibles.
           - 'least_work': Cota inferior clarividente por menor tiempo de liberación.
         """
-        cfg = SCENARIO_DEFINITIONS[scenario_key]
+        sc_map = scenarios if scenarios is not None else SCENARIO_DEFINITIONS
+        cfg = sc_map[scenario_key]
         cajeros_cfg: List[Tuple[str, str]] = cfg["cajeros"]  # type: ignore[assignment]
         ux_factor = float(cfg.get("ux_factor_slow", 1.0))
+        if not math.isfinite(ux_factor) or ux_factor <= 0.0:
+            raise ValueError("ux_factor_slow debe ser positivo y finito.")
         num_cajeros = len(cajeros_cfg)
 
         queues_by_cashier: List[List[Tuple[ArrivalVehicle, float]]] = [[] for _ in range(num_cajeros)]
@@ -319,7 +370,7 @@ class ParkingSimulationEngine:
                 min_q = min(len(departure_queues[idx]) for idx in eligible)
                 tied = [idx for idx in eligible if len(departure_queues[idx]) == min_q]
                 chosen = tied[0] if len(tied) == 1 else tied[int(rng.integers(0, len(tied)))]
-            elif routing_mode == "least_work":
+            elif routing_mode in ("least_work", "single_queue_mgc"):
                 chosen = min(eligible, key=lambda idx: (free_times[idx], idx))
             else:
                 raise ValueError(f"Modo de enrutamiento desconocido: {routing_mode}")
@@ -372,6 +423,11 @@ class ParkingSimulationEngine:
         max_sys_cashier = max(cashier_results.values(), key=lambda r: float(r["mean_system_w"]))
         max_wait_cashier = max(cashier_results.values(), key=lambda r: float(r["mean_wait_wq"]))
 
+        max_little_err = max(
+            (max(float(r["little_lq_err"]), float(r["little_l_err"])) for r in cashier_results.values()),
+            default=0.0,
+        )
+
         return {
             "scenario_key": scenario_key,
             "total_customers": total_customers,
@@ -390,6 +446,7 @@ class ParkingSimulationEngine:
             "total_lq": float(sum(float(r["lq_empirical"]) for r in cashier_results.values())),
             "mean_lq_per_cashier": float(np.mean([float(r["lq_empirical"]) for r in cashier_results.values()])),
             "total_l": float(sum(float(r["l_empirical"]) for r in cashier_results.values())),
+            "max_little_err": max_little_err,
             "max_cashier_wq": float(max_wait_cashier["mean_wait_wq"]),
             "bottleneck_cashier": str(max_wait_cashier["cashier_name"]),
             "min_service_cashier": str(min_srv_cashier["cashier_name"]),
@@ -439,85 +496,93 @@ class ParkingSimulationEngine:
 
     def determine_steady_state_replicas(
         self,
-        max_replicas: int = 150,
+        max_replicas: int = 250,
         base_seed: int = 42,
-        stability_tol_pct: float = 2.0,
-        er_target_pct: float = 7.5,
+        gamma_rel_error: float = 0.06,
+        trailing_tol_pct: float = 1.5,
         sustained_window: int = 20,
         min_replicas: int = 30,
     ) -> Tuple[int, pd.DataFrame]:
         """
-        Determina el número total de corridas o réplicas N* identificando el estado estable
-        del promedio acumulado sobre Wq y verificando el criterio de precisión ER% en E1_3_Mixtos.
+        Determina de forma estrictamente causal (sin look-ahead) el número de réplicas N*
+        aplicando la regla secuencial de Law & Kelton:
+            ME(r) / Wq(r) <= gamma / (1 + gamma)
+        junto con estabilidad causal de la ventana móvil final de longitud `sustained_window`
+        (desviación máxima de los últimos promedios acumulados respecto a Wq(r) <= trailing_tol_pct).
         """
+        er_target_pct = (gamma_rel_error / (1.0 + gamma_rel_error)) * 100.0
         wq_vals: List[float] = []
         w_vals: List[float] = []
         s_vals: List[float] = []
+        cum_wq_history: List[float] = []
+        rows: List[Dict[str, object]] = []
+        n_detected: Optional[int] = None
 
         for r in range(1, max_replicas + 1):
-            arrivals = self.model.generate_exit_arrivals(seed=base_seed + r)
+            arrivals = self.model.generate_exit_arrivals(seed=replica_stream_seed(base_seed, r, stream_id=0))
             sim_res = self.simulate_single_replica(
                 scenario_key="E1_3_Mixtos",
                 arrivals=arrivals,
-                routing_seed=base_seed * 100 + r,
+                routing_seed=replica_stream_seed(base_seed, r, stream_id=1),
                 routing_mode="random_mm1",
             )
             wq_vals.append(float(sim_res["mean_wait_wq"]))
             w_vals.append(float(sim_res["mean_system_w"]))
             s_vals.append(float(sim_res["mean_service_s"]))
 
-        wq_final = float(np.mean(wq_vals))
-        w_final = float(np.mean(w_vals))
-        rows: List[Dict[str, object]] = []
-
-        for r in range(1, max_replicas + 1):
-            sub_wq = wq_vals[:r]
-            sub_w = w_vals[:r]
-            sub_s = s_vals[:r]
-            wq_m, wq_sd, wq_l, wq_u = self._ci95(sub_wq)
-            w_m, w_sd, w_l, w_u = self._ci95(sub_w)
-            s_m = float(np.mean(sub_s))
+            wq_m, wq_sd, wq_l, wq_u = self._ci95(wq_vals)
+            w_m, _, w_l, w_u = self._ci95(w_vals)
+            s_m = float(np.mean(s_vals))
+            cum_wq_history.append(wq_m)
 
             wq_me = 0.5 * (wq_u - wq_l)
             w_me = 0.5 * (w_u - w_l)
             wq_er = (wq_me / wq_m * 100.0) if (r >= 2 and wq_m > 0.0) else float("nan")
             w_er = (w_me / w_m * 100.0) if (r >= 2 and w_m > 0.0) else float("nan")
-            dev_pct = abs(wq_m - wq_final) / wq_final * 100.0 if wq_final > 0.0 else 0.0
-            dev_w_pct = abs(w_m - w_final) / w_final * 100.0 if w_final > 0.0 else 0.0
+
+            tail_slice = cum_wq_history[max(0, r - sustained_window):r]
+            trail_var_pct = (
+                float(max(abs(val - wq_m) / wq_m * 100.0 for val in tail_slice))
+                if (r >= sustained_window and wq_m > 0.0)
+                else float("nan")
+            )
+
+            if (
+                n_detected is None
+                and r >= max(min_replicas, sustained_window)
+                and not np.isnan(wq_er)
+                and not np.isnan(trail_var_pct)
+                and wq_er <= er_target_pct
+                and trail_var_pct <= trailing_tol_pct
+            ):
+                n_detected = r
 
             rows.append({
                 "replica": r,
-                "wq_replica_min": wq_vals[r - 1],
+                "wq_replica_min": wq_vals[-1],
                 "wq_media_acumulada_min": wq_m,
                 "wq_sd_acumulada_min": wq_sd,
                 "wq_ic95_inf": wq_l,
                 "wq_ic95_sup": wq_u,
                 "wq_er_pct": wq_er,
-                "desviacion_asintotica_wq_pct": dev_pct,
-                "w_replica_min": w_vals[r - 1],
+                "variacion_ventana_causal_wq_pct": trail_var_pct,
+                "w_replica_min": w_vals[-1],
                 "w_media_acumulada_min": w_m,
                 "w_er_pct": w_er,
-                "desviacion_asintotica_w_pct": dev_w_pct,
                 "s_media_acumulada_min": s_m,
             })
 
-        df_conv = pd.DataFrame(rows)
-        n_detected = max_replicas
-        for r in range(max(min_replicas, sustained_window), max_replicas + 1):
-            tail_window = df_conv.iloc[r - sustained_window:r]
-            tail_rest = df_conv.iloc[r - 1:]
-            cond_band = bool((tail_window["desviacion_asintotica_wq_pct"] <= stability_tol_pct).all())
-            cond_future = bool((tail_rest["desviacion_asintotica_wq_pct"] <= stability_tol_pct).all())
-            cond_er = bool(df_conv.loc[r - 1, "wq_er_pct"] <= er_target_pct)
-            if cond_band and cond_future and cond_er:
-                n_detected = r
-                break
+        converged = n_detected is not None
+        if n_detected is None:
+            n_detected = max_replicas
 
-        # Redondear a múltiplo de 10 superior respetando max_replicas (ej. 120 réplicas)
+        df_conv = pd.DataFrame(rows)
         n_official = min(max_replicas, int(math.ceil(n_detected / 10.0) * 10))
         df_conv["n_detectado_exacto"] = n_detected
         df_conv["n_oficial_seleccionado"] = n_official
-        df_conv["en_estado_estable_replicas"] = df_conv["replica"] >= n_detected
+        df_conv["er_umbral_law_kelton_pct"] = er_target_pct
+        df_conv["convergio_estado_estable"] = converged
+        df_conv["en_estado_estable_replicas"] = (df_conv["replica"] >= n_detected) if converged else False
         return n_official, df_conv
 
     def compute_required_replicas(
@@ -526,6 +591,7 @@ class ParkingSimulationEngine:
         confidence: float = 0.95,
         wq_abs_tol_min: float = 1.0,
         w_rel_tol: float = 0.05,
+        scenarios: Optional[Dict[str, Dict[str, object]]] = None,
     ) -> pd.DataFrame:
         """
         Aplica el algoritmo de 8 pasos de la Semana 7 sobre una muestra piloto
@@ -534,8 +600,9 @@ class ParkingSimulationEngine:
         if df_replicas.empty:
             return pd.DataFrame()
 
+        sc_map = scenarios if scenarios is not None else SCENARIO_DEFINITIONS
         rows: List[Dict[str, object]] = []
-        for skey, cfg in SCENARIO_DEFINITIONS.items():
+        for skey, cfg in sc_map.items():
             sub = df_replicas[df_replicas["escenario"] == skey]
             if sub.empty:
                 continue
@@ -618,12 +685,17 @@ class ParkingSimulationEngine:
         base_seed: int = 42,
         routing_mode: str = "random_mm1",
         independent_arrivals_per_scenario: bool = False,
+        scenarios: Optional[Dict[str, Dict[str, object]]] = None,
+        arrival_process: str = "poisson",
+        demand_multiplier: float = 1.0,
     ) -> Dict[str, object]:
         """
-        Ejecuta `num_replicas` corridas completas de 1000 min para los 7 escenarios
-        utilizando Números Aleatorios Comunes (CRN) cuando `independent_arrivals_per_scenario=False`.
+        Ejecuta `num_replicas` corridas completas de 1000 min para los escenarios dados
+        utilizando Números Aleatorios Comunes (CRN) sincronizados (llegadas + enrutamiento)
+        cuando `independent_arrivals_per_scenario=False`.
         """
-        scenario_keys = list(SCENARIO_DEFINITIONS.keys())
+        sc_map = scenarios if scenarios is not None else SCENARIO_DEFINITIONS
+        scenario_keys = list(sc_map.keys())
         replica_rows: List[Dict[str, object]] = []
         cashier_rows: List[Dict[str, object]] = []
         wait_type_rows: List[Dict[str, object]] = []
@@ -631,22 +703,35 @@ class ParkingSimulationEngine:
         shared_arrivals: Dict[int, List[ArrivalVehicle]] = {}
         if not independent_arrivals_per_scenario:
             for r in range(1, num_replicas + 1):
-                shared_arrivals[r] = self.model.generate_exit_arrivals(seed=base_seed + r)
+                shared_arrivals[r] = self.model.generate_exit_arrivals(
+                    seed=replica_stream_seed(base_seed, r, stream_id=0),
+                    arrival_process=arrival_process,
+                    demand_multiplier=demand_multiplier,
+                )
 
         for s_idx, skey in enumerate(scenario_keys):
-            cfg = SCENARIO_DEFINITIONS[skey]
+            cfg = sc_map[skey]
             for r in range(1, num_replicas + 1):
                 arrivals = (
-                    self.model.generate_exit_arrivals(seed=base_seed + s_idx * 1000 + r)
+                    self.model.generate_exit_arrivals(
+                        seed=replica_stream_seed(base_seed, r, stream_id=100 + s_idx),
+                        arrival_process=arrival_process,
+                        demand_multiplier=demand_multiplier,
+                    )
                     if independent_arrivals_per_scenario
                     else shared_arrivals[r]
                 )
-                r_seed = base_seed * 100 + s_idx * 1000 + r
+                r_seed = (
+                    replica_stream_seed(base_seed, r, stream_id=200 + s_idx)
+                    if independent_arrivals_per_scenario
+                    else replica_stream_seed(base_seed, r, stream_id=1)
+                )
                 sim_res = self.simulate_single_replica(
                     scenario_key=skey,
                     arrivals=arrivals,
                     routing_seed=r_seed,
                     routing_mode=routing_mode,
+                    scenarios=sc_map,
                 )
 
                 replica_rows.append({
@@ -673,6 +758,7 @@ class ParkingSimulationEngine:
                     "cola_media_lq_total": sim_res["total_lq"],
                     "cola_media_lq_cajero": sim_res["mean_lq_per_cashier"],
                     "sistema_medio_l": sim_res["total_l"],
+                    "max_little_err": sim_res["max_little_err"],
                     "peor_wq_cajero_replica_min": sim_res["max_cashier_wq"],
                     "cajero_cuello_botella": sim_res["bottleneck_cashier"],
                     "cajero_menor_servicio": sim_res["min_service_cashier"],
@@ -773,7 +859,7 @@ class ParkingSimulationEngine:
         for skey in scenario_keys:
             sub = df_replicas[df_replicas["escenario"] == skey]
             c_sub = df_cashier_summary[df_cashier_summary["escenario"] == skey]
-            theo = self.model.analyze_scenario_theoretically(skey)
+            theo = self.model.analyze_scenario_theoretically(skey, scenario_cfg=sc_map[skey])
 
             wq_m, wq_sd, wq_l, wq_u = self._ci95(sub["espera_cola_wq_min"].tolist())
             w_m, w_sd, w_l, w_u = self._ci95(sub["atencion_total_w_min"].tolist())
@@ -783,7 +869,11 @@ class ParkingSimulationEngine:
 
             peor_cajero_wq_prom = float(c_sub["espera_wq_prom"].max())
             peor_cajero_p5_prom = float(c_sub["prob_wq_mayor_5m_prom"].max())
+            peor_cajero_rho_prom = float(c_sub["utilizacion_rho_prom"].max())
+            unweighted_caj_wq = float(c_sub["espera_wq_prom"].mean())
+            unweighted_caj_w = float(c_sub["atencion_w_prom"].mean())
             rho_max_media = float(sub["utilizacion_max_rho"].mean())
+            little_max_err = float(sub["max_little_err"].max())
 
             summary_rows.append({
                 "escenario": skey,
@@ -795,6 +885,7 @@ class ParkingSimulationEngine:
                 "usuarios_promedio": usr_m,
                 "usuarios_sd": usr_sd,
                 "espera_wq_media_min": wq_m,
+                "espera_wq_prom_no_ponderado_cajeros_min": unweighted_caj_wq,
                 "espera_wq_sd_min": wq_sd,
                 "espera_wq_se_min": wq_sd / math.sqrt(num_replicas) if num_replicas > 0 else 0.0,
                 "espera_wq_ic95_inf": wq_l,
@@ -808,6 +899,7 @@ class ParkingSimulationEngine:
                 "servicio_s_media_min": s_m,
                 "servicio_s_sd_min": s_sd,
                 "sistema_w_media_min": w_m,
+                "atencion_w_prom_no_ponderado_cajeros_min": unweighted_caj_w,
                 "sistema_w_sd_min": w_sd,
                 "sistema_w_se_min": w_sd / math.sqrt(num_replicas) if num_replicas > 0 else 0.0,
                 "sistema_w_ic95_inf": w_l,
@@ -815,12 +907,15 @@ class ParkingSimulationEngine:
                 "sistema_w_er_pct": ((0.5 * (w_u - w_l)) / w_m * 100.0) if w_m > 0.0 else 0.0,
                 "utilizacion_rho_media": rho_m,
                 "utilizacion_rho_sd": rho_sd,
+                "utilizacion_peor_cajero_prom": peor_cajero_rho_prom,
                 "utilizacion_max_media": rho_max_media,
-                "regimen_estabilidad": classify_utilization_regime(rho_max_media),
+                "regimen_estabilidad": classify_utilization_regime(peor_cajero_rho_prom),
                 "regimen_estabilidad_teorico": theo["regime_max_rho"],
                 "lq_total_simulada": float(sub["cola_media_lq_total"].mean()),
                 "lq_cajero_simulada": float(sub["cola_media_lq_cajero"].mean()),
                 "l_total_simulada": float(sub["sistema_medio_l"].mean()),
+                "verificacion_little_max_err": little_max_err,
+                "verificacion_little_ok": little_max_err < 1e-10,
                 "wq_teorica_mm1_min": theo["weighted_wq_mm1"],
                 "wq_teorica_mg1_min": theo["weighted_wq_mg1"],
                 "w_teorica_mm1_min": theo["weighted_w_mm1"],
@@ -845,36 +940,49 @@ class ParkingSimulationEngine:
         num_replicas: int,
         base_seed: int = 42,
         window: int = 25,
-        k_horizon: int = 500,
+        k_horizon: int = 550,
+        batch_size: int = 5,
+        min_batch_d: int = 4,
+        max_batch_d: int = 55,
+        scenarios: Optional[Dict[str, Dict[str, object]]] = None,
     ) -> Tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
         """
         Punto E: Identifica el período transitorio (warm-up desde arranque vacío L(0)=0)
-        mediante promedios móviles transversales sobre `num_replicas`, elimina los primeros
-        k* - 1 clientes y compara las estadísticas antes vs. después (por escenario y por cajero en E1).
+        mediante la regla MSER-5 (White, 1997) sobre lotes de tamaño b=5 del promedio
+        transversal por orden de llegada, junto con media móvil centrada de Welch para
+        visualización. Elimina los primeros k* - 1 vehículos y compara Antes vs. Después
+        sin truncar el resto de la jornada de 1000 minutos.
         """
+        sc_map = scenarios if scenarios is not None else SCENARIO_DEFINITIONS
         shared_arrivals = {
-            r: self.model.generate_exit_arrivals(seed=base_seed + r)
+            r: self.model.generate_exit_arrivals(seed=replica_stream_seed(base_seed, r, stream_id=0))
+            for r in range(1, num_replicas + 1)
+        }
+        routing_seeds = {
+            r: replica_stream_seed(base_seed, r, stream_id=1)
             for r in range(1, num_replicas + 1)
         }
         summary_rows: List[Dict[str, object]] = []
         curve_e1_rows: List[Dict[str, object]] = []
         cashier_e1_rows: List[Dict[str, object]] = []
 
-        for s_idx, (skey, cfg) in enumerate(SCENARIO_DEFINITIONS.items()):
-            theo = self.model.analyze_scenario_theoretically(skey)
+        n_batches = k_horizon // batch_size
+        hi_d = min(max_batch_d, n_batches - 10)
+        lo_d = min(min_batch_d, hi_d)
+
+        for skey, cfg in sc_map.items():
+            theo = self.model.analyze_scenario_theoretically(skey, scenario_cfg=cfg)
             mat_arr = np.full((num_replicas, k_horizon), np.nan, dtype=float)
             mat_wq = np.full((num_replicas, k_horizon), np.nan, dtype=float)
-            mat_w = np.full((num_replicas, k_horizon), np.nan, dtype=float)
             rep_seqs: List[List[Tuple[float, float, float, str, float, str]]] = []
 
             for r in range(1, num_replicas + 1):
-                arrivals = shared_arrivals[r]
-                r_seed = base_seed * 100 + s_idx * 1000 + r
                 sim_res = self.simulate_single_replica(
                     scenario_key=skey,
-                    arrivals=arrivals,
-                    routing_seed=r_seed,
+                    arrivals=shared_arrivals[r],
+                    routing_seed=routing_seeds[r],
                     routing_mode="random_mm1",
+                    scenarios=sc_map,
                 )
                 seq = sim_res["waits_by_arrival_order"]  # type: ignore[assignment]
                 rep_seqs.append(seq)
@@ -882,29 +990,31 @@ class ParkingSimulationEngine:
                 for idx in range(lim):
                     mat_arr[r - 1, idx] = seq[idx][0]
                     mat_wq[r - 1, idx] = seq[idx][1]
-                    mat_w[r - 1, idx] = seq[idx][2]
 
-            wq_cross = np.nanmean(mat_wq, axis=0)
-            arr_cross = np.nanmean(mat_arr, axis=0)
+            valid_cols = int(np.sum(~np.all(np.isnan(mat_wq), axis=0)))
+            eff_batches = valid_cols // batch_size
+            if eff_batches < 2:
+                raise ValueError(f"Muestras insuficientes para MSER-5 en {skey}: lotes válidos={eff_batches}")
 
-            mov_avgs = [
-                float(np.mean(wq_cross[i:i + window]))
-                for i in range(len(wq_cross) - window + 1)
-            ]
+            wq_cross = np.nanmean(mat_wq[:, :valid_cols], axis=0)
+            arr_cross = np.nanmean(mat_arr[:, :valid_cols], axis=0)
 
-            # Rango candidato adaptado a la utilización del escenario para detectar estabilización
-            min_cand = 120 if float(theo["max_rho"]) >= 0.70 else 60
-            max_cand = 240 if float(theo["max_rho"]) >= 0.70 else 150
-            cand_indices: List[int] = []
-            cand_vars: List[float] = []
-            for i in range(max(0, min_cand - window), min(len(mov_avgs) - window + 1, max_cand - window + 1)):
-                k_cand = i + window
-                if min_cand <= k_cand <= max_cand:
-                    cand_indices.append(k_cand)
-                    cand_vars.append(float(np.var(mov_avgs[i:i + window])))
+            hi_d_s = min(max_batch_d, max(1, eff_batches - 2)) if eff_batches < n_batches else hi_d
+            lo_d_s = min(min_batch_d, hi_d_s)
 
-            k_cut = cand_indices[int(np.argmin(cand_vars))] if cand_vars else min_cand
-            t_cut_min = float(arr_cross[k_cut - 1])
+            z_batches = wq_cross[:eff_batches * batch_size].reshape(eff_batches, batch_size).mean(axis=1)
+            best_d = lo_d_s
+            best_mser = float("inf")
+            for d in range(lo_d_s, hi_d_s + 1):
+                tail = z_batches[d:]
+                m_tail = float(np.mean(tail))
+                mser_val = float(np.sum((tail - m_tail) ** 2) / ((eff_batches - d) ** 2))
+                if mser_val < best_mser:
+                    best_mser = mser_val
+                    best_d = d
+
+            k_cut = batch_size * best_d + 1
+            t_cut_min = float(arr_cross[min(k_cut - 1, len(arr_cross) - 1)])
 
             wq_all_reps = [float(np.mean([x[1] for x in seq])) for seq in rep_seqs if seq]
             w_all_reps = [float(np.mean([x[2] for x in seq])) for seq in rep_seqs if seq]
@@ -919,18 +1029,62 @@ class ParkingSimulationEngine:
                 if len(seq) >= k_cut
             ]
 
+            cashier_names = [cname for cname, _ in cfg["cajeros"]]  # type: ignore[misc]
+            c_wq_ss_map: Dict[str, List[float]] = {c: [] for c in cashier_names}
+            c_p5_ss_map: Dict[str, List[float]] = {c: [] for c in cashier_names}
+            c_rho_ss_map: Dict[str, List[float]] = {c: [] for c in cashier_names}
+            lq_caj_ss_reps: List[float] = []
+            p5_glob_ss_reps: List[float] = []
+
+            for seq in rep_seqs:
+                if len(seq) < k_cut:
+                    continue
+                tail_seq = seq[k_cut - 1:]
+                t_cut_r = tail_seq[0][0]
+                t_end_r = max(self.model.horizon_minutes, max(x[0] + x[2] for x in tail_seq))
+                h_ss = max(1e-9, t_end_r - t_cut_r)
+
+                p5_glob_ss_reps.append(float(np.mean([x[1] > 5.0 for x in tail_seq]) * 100.0))
+                q_area = sum(
+                    max(0.0, min(t_end_r, x[0] + x[1]) - max(t_cut_r, x[0]))
+                    for x in seq
+                    if x[1] > 0.0
+                )
+                lq_caj_ss_reps.append((q_area / h_ss) / len(cashier_names))
+
+                for cname in cashier_names:
+                    c_ss = [x for x in tail_seq if x[3] == cname]
+                    if c_ss:
+                        c_wq_ss_map[cname].append(float(np.mean([x[1] for x in c_ss])))
+                        c_p5_ss_map[cname].append(float(np.mean([x[1] > 5.0 for x in c_ss]) * 100.0))
+                    busy_c = sum(
+                        max(0.0, min(t_end_r, x[0] + x[2]) - max(t_cut_r, x[0] + x[1]))
+                        for x in seq
+                        if x[3] == cname
+                    )
+                    c_rho_ss_map[cname].append((busy_c / h_ss) * 100.0)
+
+            peor_wq_ss_m = float(max(np.mean(v) if v else 0.0 for v in c_wq_ss_map.values()))
+            peor_p5_ss_m = float(max(np.mean(v) if v else 0.0 for v in c_p5_ss_map.values()))
+            peor_rho_ss_m = float(max(np.mean(v) if v else 0.0 for v in c_rho_ss_map.values()))
+            lq_caj_ss_m = float(np.mean(lq_caj_ss_reps)) if lq_caj_ss_reps else 0.0
+            p5_glob_ss_m = float(np.mean(p5_glob_ss_reps)) if p5_glob_ss_reps else 0.0
+
             wq_all_m = float(np.mean(wq_all_reps))
             wq_ss_m, wq_ss_sd, wq_ss_l, wq_ss_u = self._ci95(wq_ss_reps)
             n_ss_reps = len(wq_ss_reps)
             wq_ss_se = wq_ss_sd / math.sqrt(n_ss_reps) if n_ss_reps > 0 else 0.0
+            wq_ss_er = ((0.5 * (wq_ss_u - wq_ss_l)) / wq_ss_m * 100.0) if wq_ss_m > 0.0 else 0.0
             w_all_m = float(np.mean(w_all_reps))
             w_ss_m = float(np.mean(w_ss_reps))
-            sesgo_pct = ((wq_ss_m - wq_all_m) / wq_ss_m * 100.0) if wq_ss_m > 0 else 0.0
-            sesgo_w_pct = ((w_ss_m - w_all_m) / w_ss_m * 100.0) if w_ss_m > 0 else 0.0
+            sesgo_pct = ((wq_ss_m - wq_all_m) / wq_ss_m * 100.0) if wq_ss_m > 0.0 else 0.0
+            incr_pct = ((wq_ss_m - wq_all_m) / wq_all_m * 100.0) if wq_all_m > 0.0 else 0.0
+            sesgo_w_pct = ((w_ss_m - w_all_m) / w_ss_m * 100.0) if w_ss_m > 0.0 else 0.0
 
             summary_rows.append({
                 "escenario": skey,
                 "nombre_corto": cfg["nombre_corto"],
+                "d_optimo_mser": best_d,
                 "k_corte_vehiculos": k_cut,
                 "tiempo_corte_aprox_min": t_cut_min,
                 "wq_con_transitorio_min": wq_all_m,
@@ -939,22 +1093,29 @@ class ParkingSimulationEngine:
                 "wq_estado_estable_se_min": wq_ss_se,
                 "wq_estado_estable_ic95_inf": wq_ss_l,
                 "wq_estado_estable_ic95_sup": wq_ss_u,
+                "wq_estado_estable_er_pct": wq_ss_er,
                 "n_replicas_estado_estable": n_ss_reps,
+                "peor_cajero_wq_estado_estable_min": peor_wq_ss_m,
+                "lq_cajero_estado_estable": lq_caj_ss_m,
+                "rho_peor_cajero_estado_estable_pct": peor_rho_ss_m,
+                "prob_wq_mayor_5m_global_estado_estable_pct": p5_glob_ss_m,
+                "prob_wq_mayor_5m_peor_cajero_estado_estable_pct": peor_p5_ss_m,
                 "wq_teorica_mg1_min": theo["weighted_wq_mg1"],
                 "w_con_transitorio_min": w_all_m,
                 "w_estado_estable_min": w_ss_m,
                 "w_teorica_mg1_min": theo["weighted_w_mg1"],
                 "sesgo_subestimacion_wq_pct": sesgo_pct,
+                "incremento_wq_pct": incr_pct,
                 "sesgo_subestimacion_w_pct": sesgo_w_pct,
             })
 
             if skey == "E1_3_Mixtos":
-                for idx in range(k_horizon):
-                    ma_val = (
-                        float(np.mean(wq_cross[max(0, idx - window + 1):idx + 1]))
-                        if idx >= window - 1
-                        else float(np.mean(wq_cross[:idx + 1]))
-                    )
+                half_w = window // 2
+                n_curve = len(wq_cross)
+                for idx in range(n_curve):
+                    lo = max(0, idx - half_w)
+                    hi = min(n_curve, idx + half_w + 1)
+                    ma_val = float(np.mean(wq_cross[lo:hi]))
                     curve_e1_rows.append({
                         "vehiculo_idx": idx + 1,
                         "tiempo_medio_llegada_min": float(arr_cross[idx]),
@@ -963,7 +1124,6 @@ class ParkingSimulationEngine:
                         "en_estado_estable": (idx + 1) >= k_cut,
                     })
 
-                cashier_names = [cname for cname, _ in cfg["cajeros"]]  # type: ignore[misc]
                 for cname in cashier_names:
                     c_wq_all, c_wq_ss, c_w_all, c_w_ss = [], [], [], []
                     for seq in rep_seqs:
@@ -986,6 +1146,7 @@ class ParkingSimulationEngine:
                         "w_estado_estable_min": float(np.mean(c_w_ss)),
                         "diferencia_wq_min": m_wq_ss - m_wq_all,
                         "sesgo_subestimacion_pct": ((m_wq_ss - m_wq_all) / m_wq_ss * 100.0) if m_wq_ss > 0 else 0.0,
+                        "incremento_wq_pct": ((m_wq_ss - m_wq_all) / m_wq_all * 100.0) if m_wq_all > 0 else 0.0,
                     })
 
         return pd.DataFrame(summary_rows), pd.DataFrame(curve_e1_rows), pd.DataFrame(cashier_e1_rows)
@@ -994,11 +1155,13 @@ class ParkingSimulationEngine:
         self,
         num_replicas: int = 100,
         base_seed: int = 42,
-        horizon_minutes: float = 3000.0,
+        horizon_minutes: float = 6000.0,
+        warmup_frac: float = 0.30,
     ) -> pd.DataFrame:
         """
-        Valida el simulador M/M/1 puro de forma aislada para cada perfil de usuario
-        contrastando las métricas post-warmup contra las fórmulas exactas M/M/1.
+        Valida el simulador M/M/1 puro de forma aislada para cada perfil sobre horizontes
+        largos (6000 min, descartando 30% inicial) contrastando frente a teoría M/M/1 y
+        verificando empíricamente la divergencia W(6000m) / W(1000m) para el perfil Normal.
         """
         rows: List[Dict[str, object]] = []
         theo_rows = {r["tipo_usuario"]: r for r in self.model.analyze_user_type_isolated_mm1()}
@@ -1009,13 +1172,15 @@ class ParkingSimulationEngine:
             tr = theo_rows[utype]
 
             w_ss_reps: List[float] = []
+            w_1000_reps: List[float] = []
             wq_ss_reps: List[float] = []
             s_reps: List[float] = []
             for r in range(1, num_replicas + 1):
-                rng = np.random.default_rng(base_seed * 10 + u_idx * 500 + r)
+                rng = np.random.default_rng(replica_stream_seed(base_seed, r, stream_id=10 + u_idx))
                 t = 0.0
                 free_t = 0.0
                 w_list: List[float] = []
+                w_1k: List[float] = []
                 wq_list: List[float] = []
                 s_list: List[float] = []
                 while True:
@@ -1029,14 +1194,20 @@ class ParkingSimulationEngine:
                     wq_list.append(wq)
                     w_list.append(wq + s)
                     s_list.append(s)
+                    if t <= 1000.0:
+                        w_1k.append(wq + s)
 
-                cut = max(1, len(w_list) // 4)
+                cut = max(1, int(len(w_list) * warmup_frac))
                 wq_ss_reps.append(float(np.mean(wq_list[cut:])))
                 w_ss_reps.append(float(np.mean(w_list[cut:])))
+                if w_1k:
+                    w_1000_reps.append(float(np.mean(w_1k)))
                 s_reps.append(float(np.mean(s_list)))
 
             w_m, w_sd, w_l, w_u = self._ci95(w_ss_reps)
-            wq_m, wq_sd, _, _ = self._ci95(wq_ss_reps)
+            wq_m, _, _, _ = self._ci95(wq_ss_reps)
+            w_1k_m = float(np.mean(w_1000_reps)) if w_1000_reps else float("nan")
+            ratio_growth = (w_m / w_1k_m) if w_1k_m > 0.0 else float("nan")
             s_m = float(np.mean(s_reps))
 
             if bool(tr["estable"]):
@@ -1051,7 +1222,11 @@ class ParkingSimulationEngine:
                 wq_teo = float("inf")
                 t_stat = float("nan")
                 p_val = float("nan")
-                veredicto = "Diverge según teoría (ρ = 1.0)"
+                veredicto = (
+                    f"Divergencia empírica verificada (W_6000/W_1000 = {ratio_growth:.2f}x)"
+                    if ratio_growth >= 1.5
+                    else "Revisar"
+                )
 
             rows.append({
                 "tipo_usuario": utype,
@@ -1062,7 +1237,9 @@ class ParkingSimulationEngine:
                 "wq_teorico_mm1_min": wq_teo,
                 "wq_simulado_est_min": wq_m,
                 "w_teorico_mm1_min": w_teo,
+                "w_horizonte_1000m_min": w_1k_m,
                 "w_simulado_est_min": w_m,
+                "ratio_crecimiento_6000_vs_1000": ratio_growth,
                 "w_ic95_inf": w_l,
                 "w_ic95_sup": w_u,
                 "t_stat_w": t_stat,
@@ -1071,37 +1248,278 @@ class ParkingSimulationEngine:
             })
         return pd.DataFrame(rows)
 
+    def validate_stationary_mg1_long_horizon(
+        self,
+        num_replicas: int = 80,
+        horizon_minutes: float = 5000.0,
+        warmup_frac: float = 0.20,
+        base_seed: int = 42,
+        scenarios: Optional[Dict[str, Dict[str, object]]] = None,
+    ) -> pd.DataFrame:
+        """
+        Validación estacionaria en horizonte largo (5000 min, descartando 20% = 1000 min
+        iniciales de calentamiento) frente a las cotas exactas Pollaczek–Khinchine M/G/1.
+        Separa claramente la evaluación asintótica del horizonte operativo de 1000 min.
+        """
+        sc_map = scenarios if scenarios is not None else SCENARIO_DEFINITIONS
+        long_model = ParkingQueuingModel(
+            user_type_probs=self.model.user_type_probs,
+            service_means=self.model.service_means,
+            arrival_means=self.model.arrival_means,
+            base_cashiers=self.model.base_cashiers,
+            horizon_minutes=horizon_minutes,
+        )
+        long_engine = ParkingSimulationEngine(long_model)
+        t_cut = horizon_minutes * warmup_frac
+
+        shared_arr = {
+            r: long_model.generate_exit_arrivals(seed=replica_stream_seed(base_seed, r, stream_id=5))
+            for r in range(1, num_replicas + 1)
+        }
+        routing_seeds = {
+            r: replica_stream_seed(base_seed, r, stream_id=6)
+            for r in range(1, num_replicas + 1)
+        }
+
+        rows: List[Dict[str, object]] = []
+        for skey, cfg in sc_map.items():
+            theo = long_model.analyze_scenario_theoretically(skey, scenario_cfg=cfg)
+            wq_mg1 = float(theo["weighted_wq_mg1"])
+            w_mg1 = float(theo["weighted_w_mg1"])
+
+            wq_ss_reps: List[float] = []
+            w_ss_reps: List[float] = []
+            for r in range(1, num_replicas + 1):
+                sim_res = long_engine.simulate_single_replica(
+                    scenario_key=skey,
+                    arrivals=shared_arr[r],
+                    routing_seed=routing_seeds[r],
+                    routing_mode="random_mm1",
+                    scenarios=sc_map,
+                )
+                seq = sim_res["waits_by_arrival_order"]  # type: ignore[assignment]
+                post = [x for x in seq if x[0] >= t_cut]
+                if post:
+                    wq_ss_reps.append(float(np.mean([x[1] for x in post])))
+                    w_ss_reps.append(float(np.mean([x[2] for x in post])))
+
+            wq_m, wq_sd, wq_l, wq_u = self._ci95(wq_ss_reps)
+            w_m, _, w_l, w_u = self._ci95(w_ss_reps)
+            se_wq = wq_sd / math.sqrt(len(wq_ss_reps)) if wq_ss_reps else 0.0
+            t_stat = (wq_m - wq_mg1) / se_wq if se_wq > 0 else 0.0
+            p_val = two_sided_t_pvalue(t_stat, max(1, len(wq_ss_reps) - 1))
+
+            rows.append({
+                "escenario": skey,
+                "nombre_corto": cfg["nombre_corto"],
+                "replicas": len(wq_ss_reps),
+                "horizonte_min": horizon_minutes,
+                "warmup_descartado_min": t_cut,
+                "wq_estacionario_5000m_min": wq_m,
+                "wq_sd_min": wq_sd,
+                "wq_ic95_inf": wq_l,
+                "wq_ic95_sup": wq_u,
+                "wq_teorica_mg1_min": wq_mg1,
+                "w_estacionario_5000m_min": w_m,
+                "w_teorica_mg1_min": w_mg1,
+                "t_stat_5000m": t_stat,
+                "p_valor_estacionario_5000m": p_val,
+                "validado_alpha_05": p_val > 0.05,
+            })
+
+        return pd.DataFrame(rows)
+
+    def compute_paired_crn_comparisons(self, res_official: Dict[str, object]) -> pd.DataFrame:
+        """
+        Calcula diferencias pareadas exactas bajo Números Aleatorios Comunes (CRN)
+        para contrastes clave entre escenarios y entre cajeros simétricos en E1 (Punto A).
+        """
+        df_rep = res_official["df_replicas"]
+        df_caj = res_official["df_cashiers"]
+        avail_scens = set(df_rep["escenario"].unique())
+
+        pairs_scen = [
+            ("Escenario", "E2_4_Mixtos - E1_3_Mixtos", "E2_4_Mixtos", "E1_3_Mixtos"),
+            ("Escenario", "E7_4_Mix_UX - E2_4_Mixtos", "E7_4_Mix_UX", "E2_4_Mixtos"),
+            ("Escenario", "E7_4_Mix_UX - E3_5_Mixtos", "E7_4_Mix_UX", "E3_5_Mixtos"),
+            ("Escenario", "E7_4_Mix_UX - E4_6_Mixtos", "E7_4_Mix_UX", "E4_6_Mixtos"),
+            ("Escenario", "E5_4_Esp_1E3L - E2_4_Mixtos", "E5_4_Esp_1E3L", "E2_4_Mixtos"),
+            ("Escenario", "E6_5_Esp_1E4L - E3_5_Mixtos", "E6_5_Esp_1E4L", "E3_5_Mixtos"),
+        ]
+
+        rows: List[Dict[str, object]] = []
+        for grp, label, key_a, key_b in pairs_scen:
+            if key_a not in avail_scens or key_b not in avail_scens:
+                continue
+            a = df_rep[df_rep["escenario"] == key_a].sort_values("replica")["espera_cola_wq_min"].to_numpy(dtype=float)
+            b = df_rep[df_rep["escenario"] == key_b].sort_values("replica")["espera_cola_wq_min"].to_numpy(dtype=float)
+            diff = a - b
+            m_d, sd_d, l_d, u_d = self._ci95(diff.tolist())
+            se_d = sd_d / math.sqrt(len(diff)) if len(diff) > 0 else 0.0
+            t_st = m_d / se_d if se_d > 0 else 0.0
+            p_v = two_sided_t_pvalue(t_st, max(1, len(diff) - 1))
+            rows.append({
+                "grupo": grp,
+                "contraste": label,
+                "metrica": "Wq (min)",
+                "media_A": float(np.mean(a)),
+                "media_B": float(np.mean(b)),
+                "delta_pareado": m_d,
+                "sd_diff": sd_d,
+                "ic95_inf": l_d,
+                "ic95_sup": u_d,
+                "t_stat": t_st,
+                "p_valor": p_v,
+                "significativo_95": p_v < 0.05,
+            })
+
+        if "E1_3_Mixtos" in avail_scens:
+            base_caj = df_caj[df_caj["escenario"] == "E1_3_Mixtos"]
+            for c_a, c_b in [("Cajero 1", "Cajero 2"), ("Cajero 1", "Cajero 3"), ("Cajero 3", "Cajero 2")]:
+                va = base_caj[base_caj["cajero"] == c_a].sort_values("replica")["atencion_total_w_min"].to_numpy(dtype=float)
+                vb = base_caj[base_caj["cajero"] == c_b].sort_values("replica")["atencion_total_w_min"].to_numpy(dtype=float)
+                diff = va - vb
+                m_d, sd_d, l_d, u_d = self._ci95(diff.tolist())
+                se_d = sd_d / math.sqrt(len(diff)) if len(diff) > 0 else 0.0
+                t_st = m_d / se_d if se_d > 0 else 0.0
+                p_v = two_sided_t_pvalue(t_st, max(1, len(diff) - 1))
+                rows.append({
+                    "grupo": "Punto A (E1 simetría)",
+                    "contraste": f"{c_a} - {c_b}",
+                    "metrica": "W (min)",
+                    "media_A": float(np.mean(va)),
+                    "media_B": float(np.mean(vb)),
+                    "delta_pareado": m_d,
+                    "sd_diff": sd_d,
+                    "ic95_inf": l_d,
+                    "ic95_sup": u_d,
+                    "t_stat": t_st,
+                    "p_valor": p_v,
+                    "significativo_95": p_v < 0.05,
+                })
+
+        return pd.DataFrame(rows)
+
+    def run_extended_sensitivity_analyses(
+        self,
+        num_replicas: int = 120,
+        base_seed: int = 42,
+    ) -> pd.DataFrame:
+        """
+        Ejecuta 4 bloques de análisis de sensibilidad Nivel B:
+          1) Cola Única Serpentine M/G/c (E1, E2, E3, E4, E7).
+          2) Barrido paramétrico UX/LPR en 4 cajeros mixtos (reducción 10% a 35%).
+          3) Llegadas hiperexponenciales H4/H4/1 (C_a^2 = 1.257) en E1 y E7.
+          4) Demanda pico +20% (lambda x 1.20) en E3, E4 y E7 (aleatorio y JSQ).
+        """
+        rows: List[Dict[str, object]] = []
+
+        def _append_summary(bloque: str, caso: str, mode: str, arrival_proc: str, dem_mult: float, r_dict: Dict[str, object]) -> None:
+            for _, sr in r_dict["df_summary"].iterrows():
+                rows.append({
+                    "bloque": bloque,
+                    "caso": caso,
+                    "escenario": sr["escenario"],
+                    "nombre_corto": sr["nombre_corto"],
+                    "routing_mode": mode,
+                    "arrival_process": arrival_proc,
+                    "demand_multiplier": dem_mult,
+                    "ux_factor_slow": sr["ux_factor_slow"],
+                    "replicas": int(sr["replicas"]),
+                    "espera_wq_media_min": sr["espera_wq_media_min"],
+                    "wq_ic95_inf": sr["espera_wq_ic95_inf"],
+                    "wq_ic95_sup": sr["espera_wq_ic95_sup"],
+                    "wq_er_pct": sr["espera_wq_er_pct"],
+                    "sistema_w_media_min": sr["sistema_w_media_min"],
+                    "prob_wq_mayor_5m_global_pct": sr["prob_wq_mayor_5m_pct"],
+                    "prob_wq_mayor_5m_peor_cajero_pct": sr["prob_wq_mayor_5m_peor_cajero_pct"],
+                    "utilizacion_rho_media_pct": float(sr["utilizacion_rho_media"]) * 100.0,
+                    "verificacion_little_max_err": sr["verificacion_little_max_err"],
+                })
+
+        # Bloque 1: Cola única M/G/c
+        mgc_keys = ["E1_3_Mixtos", "E2_4_Mixtos", "E3_5_Mixtos", "E4_6_Mixtos", "E7_4_Mix_UX"]
+        mgc_scen = {k: SCENARIO_DEFINITIONS[k] for k in mgc_keys}
+        res_mgc = self.run_multi_replica_experiment(
+            num_replicas=num_replicas,
+            base_seed=base_seed,
+            routing_mode="single_queue_mgc",
+            scenarios=mgc_scen,
+        )
+        _append_summary("Cola Única M/G/c", "Cola única serpentina FCFS", "single_queue_mgc", "poisson", 1.0, res_mgc)
+
+        # Bloque 2: Sensibilidad UX/LPR en 4 Cajeros Mixtos
+        ux_scen: Dict[str, Dict[str, object]] = {}
+        for f_ux in (0.90, 0.85, 0.80, 0.75, 0.70, 0.65):
+            pct_red = int(round((1.0 - f_ux) * 100))
+            ux_scen[f"UX_{pct_red}pct"] = {
+                "nombre": f"4 Mixtos + UX/LPR (-{pct_red}%)",
+                "nombre_corto": f"4Mix -{pct_red}%UX",
+                "num_cajeros": 4,
+                "ux_factor_slow": f_ux,
+                "cajeros": SCENARIO_DEFINITIONS["E2_4_Mixtos"]["cajeros"],
+            }
+        for mode in ("random_mm1", "shortest_queue"):
+            res_ux = self.run_multi_replica_experiment(
+                num_replicas=num_replicas,
+                base_seed=base_seed,
+                routing_mode=mode,
+                scenarios=ux_scen,
+            )
+            _append_summary("Sensibilidad UX/LPR", f"Reducción servicio lentos ({mode})", mode, "poisson", 1.0, res_ux)
+
+        # Bloque 3: Llegadas hiperexponenciales H4/H4/1 (C_a^2 = 1.257)
+        h4_scen = {k: SCENARIO_DEFINITIONS[k] for k in ("E1_3_Mixtos", "E7_4_Mix_UX")}
+        for mode in ("random_mm1", "shortest_queue"):
+            res_h4 = self.run_multi_replica_experiment(
+                num_replicas=num_replicas,
+                base_seed=base_seed,
+                routing_mode=mode,
+                scenarios=h4_scen,
+                arrival_process="hyperexponential",
+            )
+            _append_summary("Llegadas Hiperexponenciales H4/H4/1", f"Ca²=1.257 ({mode})", mode, "hyperexponential", 1.0, res_h4)
+
+        # Bloque 4: Estrés por demanda pico (+20 %)
+        peak_scen = {k: SCENARIO_DEFINITIONS[k] for k in ("E3_5_Mixtos", "E4_6_Mixtos", "E7_4_Mix_UX")}
+        for mode in ("random_mm1", "shortest_queue"):
+            res_pk = self.run_multi_replica_experiment(
+                num_replicas=num_replicas,
+                base_seed=base_seed,
+                routing_mode=mode,
+                scenarios=peak_scen,
+                demand_multiplier=1.20,
+            )
+            _append_summary("Demanda Pico (+20%)", f"λ x 1.20 ({mode})", mode, "poisson", 1.20, res_pk)
+
+        return pd.DataFrame(rows)
+
     def compute_vv_and_critical_matrix(
         self,
         res_official: Dict[str, object],
         df_warmup: pd.DataFrame,
+        res_jsq: Optional[Dict[str, object]] = None,
+        df_stat5k: Optional[pd.DataFrame] = None,
+        scenarios: Optional[Dict[str, Dict[str, object]]] = None,
     ) -> pd.DataFrame:
         """
-        Punto D y criterios de decisión (Punto C): Consolida Verificación (Ley de Little),
-        Calibración (MAE y bondad de ajuste Chi2), Validación (prueba t post-warmup vs M/G/1)
-        y evaluación dinámica frente a los umbrales aceptables y críticos del proyecto.
+        Punto D y criterios de decisión (Punto C): Consolida Verificación (Ley de Little
+        por integración continua en todas las N* réplicas), Calibración por escenario
+        (MAE, Chi2 y error específico de servicio), Validación (prueba t post-warmup y 5000 min
+        vs M/G/1) y evaluación de criterios críticos en régimen estacionario.
         """
+        sc_map = scenarios if scenarios is not None else SCENARIO_DEFINITIONS
         df_sum = res_official["df_summary"].set_index("escenario")
         df_rep = res_official["df_replicas"]
         df_caj = res_official["df_cashier_summary"]
+        df_wt = res_official["df_wait_by_type"]
         df_warm_idx = df_warmup.set_index("escenario")
+        df_jsq_idx = res_jsq["df_summary"].set_index("escenario") if res_jsq is not None else None
+        df_stat5k_idx = df_stat5k.set_index("escenario") if df_stat5k is not None else None
 
-        # 1. Verificación exacta de Ley de Little sobre trayectoria completa en cada escenario
-        arrivals_ref = self.model.generate_exit_arrivals(seed=42)
-        little_err_map: Dict[str, float] = {}
-        little_ok_map: Dict[str, bool] = {}
-        for s_idx, skey in enumerate(SCENARIO_DEFINITIONS):
-            sim_ref = self.simulate_single_replica(skey, arrivals_ref, routing_seed=4200 + s_idx * 1000 + 1)
-            max_err = max(
-                abs(float(c["lq_empirical"]) - (float(c["total_customers"]) / float(c["horizon_effective"])) * float(c["mean_wait_wq"]))
-                for c in sim_ref["cashiers"].values()  # type: ignore[union-attr]
-                if int(c["total_customers"]) > 0
-            )
-            little_err_map[skey] = max_err
-            little_ok_map[skey] = max_err < 1e-10
-
-        # 2. Calibración sobre E1_3_Mixtos (proporciones 25/20/27.5/27.5 y bondad de ajuste Chi2)
-        sub_e1 = df_rep[df_rep["escenario"] == "E1_3_Mixtos"]
+        # Calibración global de proporciones sobre E1_3_Mixtos o primer escenario disponible
+        calib_skey = "E1_3_Mixtos" if "E1_3_Mixtos" in set(df_rep["escenario"].unique()) else next(iter(sc_map))
+        sub_e1 = df_rep[df_rep["escenario"] == calib_skey]
         tot_usr_all = float(sub_e1["total_usuarios"].sum())
         col_map = {"Rápido": "rapido", "Normal": "normal", "Lento": "lento", "Muy lento": "muy_lento"}
         obs_counts = {u: float(sub_e1[col_map[u]].sum()) for u in USER_TYPES}
@@ -1119,21 +1537,45 @@ class ParkingSimulationEngine:
         )
         chi2_pval = chi2_sf_df3(chi2_stat)
 
-        df_wt = res_official["df_wait_by_type"]
-        wt_e1 = df_wt[df_wt["escenario"] == "E1_3_Mixtos"].set_index("tipo_usuario")
-        srv_rel_err_pct = float(
-            np.max([
-                abs(float(wt_e1.loc[u, "s_media_min"]) - self.model.service_means[u]) / self.model.service_means[u] * 100.0
-                for u in USER_TYPES
-            ])
-        )
-
-        # 3. Evaluación V&V y criterios críticos dinámicos por escenario
+        # Evaluación V&V y criterios críticos dinámicos homogéneos en estado estable post-MSER-5
         rows: List[Dict[str, object]] = []
-        for skey, cfg in SCENARIO_DEFINITIONS.items():
+        for skey, cfg in sc_map.items():
             r_sum = df_sum.loc[skey]
             w_row = df_warm_idx.loc[skey]
             c_sub = df_caj[df_caj["escenario"] == skey]
+            ux_factor = float(cfg.get("ux_factor_slow", 1.0))
+
+            # Calibración específica de servicio medio E[S] en el escenario correspondiente
+            wt_s = df_wt[df_wt["escenario"] == skey].set_index("tipo_usuario")
+            srv_rel_err_scen = float(
+                np.max([
+                    abs(
+                        float(wt_s.loc[u, "s_media_min"])
+                        - self.model.service_means[u] * (ux_factor if u in ("Lento", "Muy lento") else 1.0)
+                    )
+                    / (self.model.service_means[u] * (ux_factor if u in ("Lento", "Muy lento") else 1.0))
+                    * 100.0
+                    for u in USER_TYPES
+                ])
+            )
+
+            little_err = float(r_sum["verificacion_little_max_err"])
+            little_ok = bool(r_sum["verificacion_little_ok"])
+            little_jsq_err = (
+                float(df_jsq_idx.loc[skey, "verificacion_little_max_err"])
+                if df_jsq_idx is not None
+                else float("nan")
+            )
+            jsq_er_pct = (
+                float(df_jsq_idx.loc[skey, "espera_wq_er_pct"])
+                if df_jsq_idx is not None
+                else float("nan")
+            )
+            p_stat5k = (
+                float(df_stat5k_idx.loc[skey, "p_valor_estacionario_5000m"])
+                if df_stat5k_idx is not None
+                else float("nan")
+            )
 
             wq_sim = float(r_sum["espera_wq_media_min"])
             wq_ss = float(w_row["wq_estado_estable_min"])
@@ -1142,43 +1584,50 @@ class ParkingSimulationEngine:
             n_ss = int(w_row["n_replicas_estado_estable"])
 
             w_sim = float(r_sum["sistema_w_media_min"])
+            w_ss = float(w_row["w_estado_estable_min"])
             peor_wq = float(r_sum["peor_cajero_wq_prom_min"])
+            peor_wq_ss = float(w_row["peor_cajero_wq_estado_estable_min"])
             rho_med = float(r_sum["utilizacion_rho_media"]) * 100.0
+            peor_rho = float(r_sum["utilizacion_peor_cajero_prom"]) * 100.0
+            rho_peor_ss = float(w_row["rho_peor_cajero_estado_estable_pct"])
             rho_max = float(r_sum["utilizacion_max_media"]) * 100.0
             lq_cajero = float(r_sum["lq_cajero_simulada"])
+            lq_cajero_ss = float(w_row["lq_cajero_estado_estable"])
             prob_gt5_global = float(r_sum["prob_wq_mayor_5m_pct"])
             prob_gt5_peor = float(c_sub["prob_wq_mayor_5m_prom"].max())
+            prob_gt5_peor_ss = float(w_row["prob_wq_mayor_5m_peor_cajero_estado_estable_pct"])
 
             # Prueba t bilateral frente a referencia analítica M/G/1 usando el error estándar estacionario
             t_stat = (wq_ss - wq_mg1) / wq_ss_se if wq_ss_se > 0 else 0.0
             p_val = two_sided_t_pvalue(t_stat, max(1, n_ss - 1))
 
-            if wq_sim <= 3.0 and peor_wq <= 3.5:
+            # Criterios críticos evaluados homogéneamente sobre estado estable post-MSER-5
+            if wq_ss < 3.0 and peor_wq_ss < 3.5:
                 crit_wq = "Óptimo (<3m)"
-            elif wq_sim <= 5.0 and peor_wq <= 5.5:
+            elif wq_ss <= 5.0 and peor_wq_ss <= 5.5:
                 crit_wq = "Aceptable (<=5m)"
             else:
                 crit_wq = "Crítico (>5m)"
 
-            if w_sim < 5.0:
+            if w_ss < 5.0:
                 crit_w = "Óptimo (<5m)"
-            elif w_sim <= 8.0:
+            elif w_ss <= 8.0:
                 crit_w = "Aceptable (<=8m)"
             else:
                 crit_w = "Crítico (>8m)"
 
-            crit_rho = classify_utilization_regime(rho_max / 100.0)
+            crit_rho = classify_utilization_regime(rho_peor_ss / 100.0)
 
-            if lq_cajero < 3.0:
+            if lq_cajero_ss < 3.0:
                 crit_lq = "Aceptable (<3 cli)"
-            elif lq_cajero <= 5.0:
+            elif lq_cajero_ss <= 5.0:
                 crit_lq = "Alerta (3-5 cli)"
             else:
                 crit_lq = "Crítico (>5 cli)"
 
-            if prob_gt5_peor < 10.0:
+            if prob_gt5_peor_ss < 10.0:
                 crit_prob5 = "Óptimo (<10%)"
-            elif prob_gt5_peor <= 20.0:
+            elif prob_gt5_peor_ss <= 20.0:
                 crit_prob5 = "Aceptable (<=20%)"
             else:
                 crit_prob5 = "Crítico (>20%)"
@@ -1204,26 +1653,36 @@ class ParkingSimulationEngine:
                 "escenario": skey,
                 "nombre_corto": cfg["nombre_corto"],
                 "num_cajeros": cfg["num_cajeros"],
-                "verificacion_little_max_err": little_err_map[skey],
-                "verificacion_little_ok": little_ok_map[skey],
+                "verificacion_little_max_err": little_err,
+                "verificacion_little_jsq_max_err": little_jsq_err,
+                "verificacion_little_ok": little_ok,
                 "calibracion_mae_pp": calib_mae_pp,
                 "calibracion_chi2_stat": chi2_stat,
                 "calibracion_chi2_pval": chi2_pval,
-                "calibracion_srv_max_rel_err_pct": srv_rel_err_pct,
+                "calibracion_srv_max_rel_err_pct": srv_rel_err_scen,
                 "wq_sim_min": wq_sim,
                 "wq_estable_min": wq_ss,
                 "wq_teorica_mg1_min": wq_mg1,
                 "t_stat_vs_mg1": t_stat,
                 "p_valor_vs_mg1": p_val,
+                "p_valor_estacionario_5000m": p_stat5k,
                 "wq_er_pct": float(r_sum["espera_wq_er_pct"]),
+                "wq_estable_er_pct": float(w_row["wq_estado_estable_er_pct"]),
+                "jsq_wq_er_pct": jsq_er_pct,
                 "w_sim_min": w_sim,
+                "w_estable_min": w_ss,
                 "w_er_pct": float(r_sum["sistema_w_er_pct"]),
                 "peor_cajero_wq_prom_min": peor_wq,
+                "peor_cajero_wq_estable_min": peor_wq_ss,
                 "lq_cajero": lq_cajero,
+                "lq_cajero_estable": lq_cajero_ss,
                 "rho_media_pct": rho_med,
+                "rho_peor_cajero_pct": peor_rho,
+                "rho_peor_cajero_estable_pct": rho_peor_ss,
                 "rho_max_pct": rho_max,
                 "prob_wq_mayor_5m_global_pct": prob_gt5_global,
                 "prob_wq_mayor_5m_peor_cajero_pct": prob_gt5_peor,
+                "prob_wq_mayor_5m_peor_cajero_estable_pct": prob_gt5_peor_ss,
                 "criterio_wq": crit_wq,
                 "criterio_w": crit_w,
                 "criterio_rho": crit_rho,

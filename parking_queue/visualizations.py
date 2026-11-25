@@ -4,6 +4,7 @@ Genera 7 figuras en alta resolución (300 DPI) con estética editorial sobria,
 etiquetas nítidas y cero solapamientos.
 """
 
+from typing import Optional
 import os
 import numpy as np
 import pandas as pd
@@ -47,8 +48,8 @@ class ParkingVisualizer:
         wq_mg1_base: float,
         filename: str = "fig1_estado_estable_replicas.png",
     ) -> str:
-        """Figura 1: Determinación del número de réplicas N* por estado estable sobre la media y ER%."""
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14.2, 5.6), dpi=300)
+        """Figura 1: Determinación causal de réplicas N* por Law & Kelton y estabilidad móvil."""
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14.4, 5.6), dpi=300)
 
         reps = df_conv["replica"].values
         cum_wq = df_conv["wq_media_acumulada_min"].values
@@ -56,27 +57,27 @@ class ParkingVisualizer:
         ic_sup = df_conv["wq_ic95_sup"].values
         n_det = int(df_conv["n_detectado_exacto"].iloc[0])
         n_off = int(df_conv["n_oficial_seleccionado"].iloc[0])
-        wq_final = float(cum_wq[-1])
-        band_lo = wq_final * 0.98
-        band_hi = wq_final * 1.02
+        er_lk = float(df_conv["er_umbral_law_kelton_pct"].iloc[0])
+        wq_n_off = float(df_conv.loc[df_conv["replica"] == n_off, "wq_media_acumulada_min"].iloc[0])
+        band_lo = wq_n_off * 0.985
+        band_hi = wq_n_off * 1.015
 
         ax1.fill_between(reps, ic_inf, ic_sup, color="#BFDBFE", alpha=0.45, label="IC 95% t acumulado")
-        ax1.axhspan(band_lo, band_hi, color="#DCFCE7", alpha=0.55, label="Banda estable ±2% (asintótica)")
+        ax1.axhspan(band_lo, band_hi, color="#DCFCE7", alpha=0.55, label="Banda causal ±1.5% en N*")
         ax1.plot(reps, cum_wq, color=self.palette["navy"], linewidth=2.2, label="Media acumulada Wq(r)")
         ax1.axhline(wq_mg1_base, color=self.palette["teal"], linestyle="-.", linewidth=1.4,
                     label=f"Teórico M/G/1 = {wq_mg1_base:.2f} min")
         ax1.axvline(n_det, color=self.palette["amber"], linestyle=":", linewidth=1.7,
-                    label=f"Estabilización detectada r = {n_det}")
+                    label=f"Detección Law & Kelton r = {n_det}")
         ax1.axvline(n_off, color=self.palette["red"], linestyle="--", linewidth=1.8,
                     label=f"Réplicas oficiales N* = {n_off}")
 
-        wq_n_off = float(df_conv.loc[df_conv["replica"] == n_off, "wq_media_acumulada_min"].iloc[0])
         ax1.scatter([n_off], [wq_n_off], color=self.palette["red"], zorder=6, s=55)
         ax1.annotate(
             f"N* = {n_off}\nWq = {wq_n_off:.2f} min",
             xy=(n_off, wq_n_off),
-            xytext=(min(n_off + 8, reps.max() - 25), wq_n_off - 2.4),
-            fontsize=8.2, fontweight="bold", color="#991B1B",
+            xytext=(max(30, n_off - 68), wq_n_off - 2.9),
+            fontsize=8.1, fontweight="bold", color="#991B1B",
             bbox=dict(boxstyle="round,pad=0.25", facecolor="white", edgecolor="#FCA5A5"),
             arrowprops=dict(arrowstyle="->", color="#991B1B", lw=1.1),
         )
@@ -85,11 +86,11 @@ class ParkingVisualizer:
         ax1.set_ylim(max(0.0, float(np.min(cum_wq)) - 4.0), float(np.percentile(ic_sup[5:], 98)) * 1.18)
         ax1.set_xlabel("Número acumulado de réplicas (r)", fontsize=9.8)
         ax1.set_ylabel("Tiempo promedio acumulado en cola Wq (min)", fontsize=9.8)
-        ax1.set_title("A. Estado Estable del Promedio Acumulado de Wq (3 Mixtos)", fontsize=10.6, fontweight="bold", color="#0F172A")
+        ax1.set_title("A. Convergencia Causal del Promedio Acumulado de Wq (3 Mixtos)", fontsize=10.4, fontweight="bold", color="#0F172A")
         ax1.grid(True, linestyle=":", alpha=0.6)
-        ax1.legend(loc="upper right", fontsize=7.6, frameon=True)
+        ax1.legend(loc="upper right", fontsize=7.5, frameon=True)
 
-        # Panel B: Error Relativo ER% de Wq y W
+        # Panel B: Error Relativo ER% de Wq y W frente a Law & Kelton
         sub_b = df_conv[df_conv["replica"] >= 5]
         r_b = sub_b["replica"].values
         er_wq = sub_b["wq_er_pct"].values
@@ -97,8 +98,10 @@ class ParkingVisualizer:
 
         ax2.plot(r_b, er_wq, color=self.palette["blue"], linewidth=2.2, label="ER 95% de Wq (%)")
         ax2.plot(r_b, er_w, color=self.palette["teal"], linewidth=2.0, label="ER 95% de W (%)")
-        ax2.axhline(10.0, color="#64748B", linestyle="--", linewidth=1.3, label="Umbral curso ER ≤ 10%")
-        ax2.axhline(7.5, color=self.palette["amber"], linestyle=":", linewidth=1.5, label="Cota exigida ER ≤ 7.5%")
+        ax2.axhline(10.0, color="#64748B", linestyle="--", linewidth=1.2, label="Umbral curso ER ≤ 10%")
+        ax2.axhline(er_lk, color=self.palette["amber"], linestyle=":", linewidth=1.6,
+                    label=f"Cota Law & Kelton (γ=0.06 → {er_lk:.2f}%)")
+        ax2.axhline(5.0, color="#16A34A", linestyle="-.", linewidth=1.2, label="Meta ER(W) ≤ 5.0%")
         ax2.axvline(n_off, color=self.palette["red"], linestyle="--", linewidth=1.7, label=f"N* = {n_off} réplicas")
 
         er_wq_off = float(df_conv.loc[df_conv["replica"] == n_off, "wq_er_pct"].iloc[0])
@@ -107,8 +110,8 @@ class ParkingVisualizer:
         ax2.annotate(
             f"En N*={n_off}:\nER(Wq)={er_wq_off:.2f}%\nER(W)={er_w_off:.2f}%",
             xy=(n_off, er_wq_off),
-            xytext=(max(20, n_off - 55), er_wq_off + 7.5),
-            fontsize=8.1, fontweight="bold", color="#1E3A8A",
+            xytext=(max(30, n_off - 90), er_wq_off + 9.0),
+            fontsize=8.0, fontweight="bold", color="#1E3A8A",
             bbox=dict(boxstyle="round,pad=0.25", facecolor="white", edgecolor="#93C5FD"),
             arrowprops=dict(arrowstyle="->", color="#1E3A8A", lw=1.1),
         )
@@ -117,9 +120,9 @@ class ParkingVisualizer:
         ax2.set_ylim(0, min(65.0, float(np.nanmax(er_wq)) * 1.08))
         ax2.set_xlabel("Número acumulado de réplicas (r)", fontsize=9.8)
         ax2.set_ylabel("Error Relativo ER = (ME / Ȳ) × 100 (%)", fontsize=9.8)
-        ax2.set_title("B. Convergencia del Error Relativo Estadístico (IC 95% t)", fontsize=10.6, fontweight="bold", color="#0F172A")
+        ax2.set_title("B. Convergencia Secuencial del Error Relativo (Law & Kelton)", fontsize=10.4, fontweight="bold", color="#0F172A")
         ax2.grid(True, linestyle=":", alpha=0.6)
-        ax2.legend(loc="upper right", fontsize=7.8, frameon=True)
+        ax2.legend(loc="upper right", fontsize=7.4, frameon=True)
 
         out_path = os.path.join(self.output_dir, filename)
         plt.tight_layout()
@@ -186,8 +189,8 @@ class ParkingVisualizer:
         ax1.set_xticklabels([f"{c}\n(ρ={r*100:.1f}%)" for c, r in zip(cajeros, base_sum["utilizacion_rho_prom"])],
                             fontsize=9.0, fontweight="bold")
         ax1.set_ylabel("Tiempo promedio por vehículo (min)", fontsize=9.8)
-        ax1.set_title(f"A. Servicio (S), Espera (Wq) y Atención Total (W) — {n_rep} Réplicas",
-                      fontsize=10.5, fontweight="bold", color="#0F172A")
+        ax1.set_title(f"A. Servicio (S), Espera (Wq) y W ({n_rep} Rép.; IC 95% solapados por simetría)",
+                      fontsize=10.1, fontweight="bold", color="#0F172A")
         ax1.set_ylim(0, float(np.max(wt_m + wt_err)) * 1.44)
         ax1.grid(axis="y", linestyle=":", alpha=0.6)
         ax1.legend(loc="upper right", fontsize=8.0, frameon=True)
@@ -259,10 +262,10 @@ class ParkingVisualizer:
 
         ax1.set_xticks(x)
         ax1.set_xticklabels(USER_TYPES, fontsize=9.5, fontweight="bold")
-        ax1.set_ylabel("Promedio de vehículos en los 3 cajeros (1000 min)", fontsize=9.6)
+        ax1.set_ylabel("Promedio de vehículos ± DE en 3 cajeros (1000 min)", fontsize=9.5)
         ax1.set_title(
-            f"A. Promedio por Tipo en la Totalidad de Cajeros (Total = {tot_mean:.2f} veh, {n_rep} Rép.)",
-            fontsize=10.2, fontweight="bold", color="#0F172A",
+            f"A. Promedio por Tipo en los 3 Cajeros (±DE; Total = {tot_mean:.2f} veh, {n_rep} Rép.)",
+            fontsize=10.0, fontweight="bold", color="#0F172A",
         )
         ax1.set_ylim(0, float(np.max(means + sds)) * 1.44)
         ax1.grid(axis="y", linestyle=":", alpha=0.6)
@@ -275,8 +278,8 @@ class ParkingVisualizer:
         s_emp = np.array([float(wt_idx.loc[u, "s_media_min"]) for u in USER_TYPES])
 
         w_bar = 0.34
-        b_arr = ax2.bar(x - w_bar / 2, theo_pcts, width=w_bar, color="#64748B", alpha=0.85, label="% de llegadas (Tabla)")
-        b_load = ax2.bar(x + w_bar / 2, load_shares, width=w_bar, color="#DC2626", alpha=0.88, label="% de carga de trabajo en cajeros")
+        b_arr = ax2.bar(x - w_bar / 2, theo_pcts, width=w_bar, color="#64748B", alpha=0.85, label="% de llegadas (Teór.)")
+        b_load = ax2.bar(x + w_bar / 2, load_shares, width=w_bar, color="#DC2626", alpha=0.88, label="% carga en servicio (Teór.)")
 
         for idx_b in range(len(x)):
             ax2.text(x[idx_b] - w_bar / 2 - 0.02, theo_pcts[idx_b] + 0.9, f"{theo_pcts[idx_b]:.1f}%",
@@ -315,12 +318,14 @@ class ParkingVisualizer:
         self,
         df_summary: pd.DataFrame,
         df_jsq_summary: pd.DataFrame,
+        df_sens_ext: Optional[pd.DataFrame] = None,
         filename: str = "fig4_estrategias_mejora_escenarios.png",
     ) -> str:
-        """Figura 4 (Punto C): Comparativa de estrategias E1..E7 en espera Wq, JSQ, utilización y P(Wq>5m)."""
+        """Figura 4 (Punto C): Comparativa de estrategias E1..E7 en espera Wq, JSQ, M/G/c, uso y P(Wq>5m)."""
         fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14.6, 5.8), dpi=300)
 
         labels = df_summary["nombre_corto"].tolist()
+        skeys = df_summary["escenario"].tolist()
         x = np.arange(len(labels))
         w = 0.36
 
@@ -331,11 +336,22 @@ class ParkingVisualizer:
 
         b1 = ax1.bar(x - w / 2, wq_mm1, width=w, yerr=wq_err, capsize=3,
                      color=["#DC2626" if v > 5.0 else "#2563EB" for v in wq_mm1],
-                     alpha=0.88, label="M/M/1 Independiente (IC 95%)")
+                     alpha=0.88, label="M/H4/1 Paralelo (IC 95%)")
         b2 = ax1.bar(x + w / 2, wq_jsq, width=w, color="#0F766E", alpha=0.88,
                      label="Sensibilidad JSQ (Cola más corta)")
         ax1.scatter(x - w / 2, peor_wq, color="#7C2D12", marker="^", s=45, zorder=5,
                     label="Peor cajero Wq (promedio)")
+
+        if df_sens_ext is not None and not df_sens_ext.empty:
+            mgc_sub = df_sens_ext[df_sens_ext["bloque"] == "Cola Única M/G/c"].set_index("escenario")
+            mgc_x, mgc_y = [], []
+            for idx_s, sk in enumerate(skeys):
+                if sk in mgc_sub.index:
+                    mgc_x.append(x[idx_s] + w / 2)
+                    mgc_y.append(float(mgc_sub.loc[sk, "espera_wq_media_min"]))
+            if mgc_x:
+                ax1.scatter(mgc_x, mgc_y, color="#7C3AED", marker="D", s=40, edgecolor="white",
+                            linewidth=0.7, zorder=7, label="Cola Única M/G/c (cota inf.)")
 
         ax1.axhline(5.0, color="#DC2626", linestyle="--", linewidth=1.3, zorder=1, label="Umbral crítico Wq = 5.0 min")
         ax1.axhline(3.0, color="#16A34A", linestyle=":", linewidth=1.4, zorder=1, label="Meta óptima Wq = 3.0 min")
@@ -344,30 +360,31 @@ class ParkingVisualizer:
             ax1.text(x[idx_b] - w / 2, max(wq_mm1[idx_b] + wq_err[idx_b], peor_wq[idx_b]) + 0.35,
                      f"{wq_mm1[idx_b]:.2f}", ha="center", va="bottom", fontsize=7.6, fontweight="bold", color="#0F172A",
                      bbox=dict(boxstyle="square,pad=0.08", facecolor="white", edgecolor="none", alpha=0.85), zorder=6)
-            ax1.text(x[idx_b] + w / 2, wq_jsq[idx_b] + 0.25,
+            ax1.text(x[idx_b] + w / 2, wq_jsq[idx_b] + 0.32,
                      f"{wq_jsq[idx_b]:.2f}", ha="center", va="bottom", fontsize=7.5, fontweight="bold", color="#0F766E",
                      bbox=dict(boxstyle="square,pad=0.08", facecolor="white", edgecolor="none", alpha=0.88), zorder=6)
 
         ax1.set_xticks(x)
         ax1.set_xticklabels(labels, fontsize=8.1, fontweight="bold", rotation=16, ha="right")
         ax1.set_ylabel("Tiempo promedio de espera en cola Wq (min)", fontsize=9.8)
-        ax1.set_title("A. Comparativa de Espera Wq: M/M/1 Independiente vs. JSQ", fontsize=10.5, fontweight="bold", color="#0F172A")
+        ax1.set_title("A. Espera Wq: M/H4/1 Paralelo vs. JSQ y Cola Única M/G/c", fontsize=10.2, fontweight="bold", color="#0F172A")
         ax1.set_ylim(0, max(float(np.max(wq_mm1 + wq_err)), float(np.max(peor_wq))) * 1.24)
         ax1.grid(axis="y", linestyle=":", alpha=0.6)
         ax1.legend(loc="upper right", fontsize=7.4, frameon=True)
 
-        # Panel B: Utilización pico rho_max (%) vs P(Wq > 5 min) peor cajero (%)
-        rho_max = df_summary["utilizacion_max_media"].values * 100.0
+        # Panel B: Utilización del cajero más cargado rho_caj (%) vs P(Wq > 5 min) peor cajero (%)
+        rho_col = "utilizacion_peor_cajero_prom" if "utilizacion_peor_cajero_prom" in df_summary.columns else "utilizacion_max_media"
+        rho_peor = df_summary[rho_col].values * 100.0
         p5_peor = df_summary["prob_wq_mayor_5m_peor_cajero_pct"].values
 
-        ax2.bar(x - w / 2, rho_max, width=w, color="#1E3A8A", alpha=0.86, label="Utilización cajero pico ρ_máx (%)")
+        ax2.bar(x - w / 2, rho_peor, width=w, color="#1E3A8A", alpha=0.86, label="Utilización cajero más cargado ρ_caj (%)")
         ax2.bar(x + w / 2, p5_peor, width=w, color="#F59E0B", alpha=0.88, label="P(Wq > 5 min) peor cajero (%)")
 
         ax2.axhspan(45.0, 85.0, color="#DCFCE7", alpha=0.25, zorder=0, label="Zona ρ aceptable/óptima (45%–85%)")
         ax2.axhline(20.0, color="#DC2626", linestyle="--", linewidth=1.3, zorder=1, label="Umbral crítico P(Wq>5m) = 20%")
 
         for idx_b in range(len(x)):
-            ax2.text(x[idx_b] - w / 2, rho_max[idx_b] + 1.4, f"{rho_max[idx_b]:.1f}%",
+            ax2.text(x[idx_b] - w / 2, rho_peor[idx_b] + 1.4, f"{rho_peor[idx_b]:.1f}%",
                      ha="center", va="bottom", fontsize=7.4, fontweight="bold", color="#1E3A8A", zorder=6)
             ax2.text(x[idx_b] + w / 2, p5_peor[idx_b] + 1.6, f"{p5_peor[idx_b]:.1f}%",
                      ha="center", va="bottom", fontsize=7.4, fontweight="bold", color="#B45309",
@@ -376,10 +393,10 @@ class ParkingVisualizer:
         ax2.set_xticks(x)
         ax2.set_xticklabels(labels, fontsize=8.1, fontweight="bold", rotation=16, ha="right")
         ax2.set_ylabel("Porcentaje (%)", fontsize=9.8)
-        ax2.set_title("B. Utilización Pico (ρ_máx) y Riesgo de Espera > 5 min", fontsize=10.5, fontweight="bold", color="#0F172A")
-        ax2.set_ylim(0, max(float(np.max(rho_max)), float(np.max(p5_peor))) * 1.24)
+        ax2.set_title("B. Utilización por Cajero Más Cargado y Riesgo > 5 min", fontsize=10.3, fontweight="bold", color="#0F172A")
+        ax2.set_ylim(0, max(float(np.max(rho_peor)), float(np.max(p5_peor))) * 1.24)
         ax2.grid(axis="y", linestyle=":", alpha=0.6)
-        ax2.legend(loc="upper right", fontsize=7.3, frameon=True)
+        ax2.legend(loc="upper right", fontsize=7.2, frameon=True)
 
         out_path = os.path.join(self.output_dir, filename)
         plt.tight_layout()
@@ -390,6 +407,7 @@ class ParkingVisualizer:
     def plot_vv_process_diagram(
         self,
         df_vv: pd.DataFrame,
+        num_tests: int = 25,
         filename: str = "fig5_proceso_vv_diagrama.png",
     ) -> str:
         """Figura 5 (Punto D): Diagrama formal del proceso Verificación-Calibración-Validación y p-valores."""
@@ -407,22 +425,29 @@ class ParkingVisualizer:
 
         mae_pp = float(df_vv["calibracion_mae_pp"].iloc[0])
         chi2_p = float(df_vv["calibracion_chi2_pval"].iloc[0])
-        srv_err = float(df_vv["calibracion_srv_max_rel_err_pct"].iloc[0])
+        srv_err = float(df_vv["calibracion_srv_max_rel_err_pct"].max())
         max_little = float(df_vv["verificacion_little_max_err"].max())
         p_min = float(df_vv["p_valor_vs_mg1"].min())
         p_max = float(df_vv["p_valor_vs_mg1"].max())
+        has_5k = "p_valor_estacionario_5000m" in df_vv.columns and df_vv["p_valor_estacionario_5000m"].notna().any()
+        if has_5k:
+            p5k_min = float(df_vv["p_valor_estacionario_5000m"].min())
+            p5k_max = float(df_vv["p_valor_estacionario_5000m"].max())
+            desc_val = f"1000m MSER-5: p ∈ [{p_min:.3f}, {p_max:.3f}] · 5000m: p ∈ [{p5k_min:.3f}, {p5k_max:.3f}]"
+        else:
+            desc_val = f"1000m MSER-5: p ∈ [{p_min:.3f}, {p_max:.3f}] (> 0.05)"
 
         steps = [
-            (8.6, "#1E3A8A", "1. MODELO CONCEPTUAL Y DES (Supercentro M/M/1)",
-             "Parametrización 4 perfiles · 1000 min · CRN PCG64 (seed=42)"),
+            (8.6, "#1E3A8A", "1. MODELO CONCEPTUAL Y DES (M/M/1 y M/H4/1)",
+             "4 perfiles · 1000m (y 5000m estac.) · SeedSequence + CRN PCG64"),
             (6.8, "#0F766E", "2. VERIFICACIÓN: ¿Código libre de errores?",
-             f"16/16 pruebas unitarias · Ley de Little error máx = {max_little:.1e} (<1e-10)"),
-            (4.9, "#D97706", "3. CALIBRACIÓN: ¿Ajuste a parámetros y tasas?",
-             f"MAE perfiles = {mae_pp:.2f} pp · χ² p = {chi2_p:.3f} · Error E[S] ≤ {srv_err:.2f}%"),
-            (3.0, "#2563EB", "4. VALIDACIÓN: ¿Concuerda con teoría M/M/1–M/G/1?",
-             f"Prueba t post-warmup vs M/G/1: p ∈ [{p_min:.3f}, {p_max:.3f}] (> 0.05)"),
+             f"{num_tests}/{num_tests} pruebas · |∫Q(t)dt/H_eff - λ_eff·Wq| ≤ {max_little:.1e} (<1e-10)"),
+            (4.9, "#D97706", "3. CALIBRACIÓN: ¿Ajuste por escenario y tasas?",
+             f"MAE = {mae_pp:.2f} pp · χ² p = {chi2_p:.3f} · Error máx E[S] = {srv_err:.2f}%"),
+            (3.0, "#2563EB", "4. VALIDACIÓN: ¿Concuerda con Pollaczek–Khinchine M/G/1?",
+             desc_val),
             (1.1, "#16A34A", "5. MODELO VALIDADO Y APROBADO",
-             "Análisis de escenarios E1..E7, warm-up y decisión operativa"),
+             "Escenarios E1..E7, M/G/c, IC pareados CRN y sensibilidad"),
         ]
 
         for idx_s, (yc, col, title, desc) in enumerate(steps):
@@ -433,7 +458,7 @@ class ParkingVisualizer:
             )
             ax_d.add_patch(box)
             ax_d.text(3.65, yc + 0.22, title, ha="center", va="center", fontsize=8.4, fontweight="bold", color=col)
-            ax_d.text(3.65, yc - 0.24, desc, ha="center", va="center", fontsize=7.6, color="#1E293B")
+            ax_d.text(3.65, yc - 0.24, desc, ha="center", va="center", fontsize=7.2, color="#1E293B")
 
             if idx_s < len(steps) - 1:
                 y_next = steps[idx_s + 1][0]
@@ -518,9 +543,9 @@ class ParkingVisualizer:
         ax1.axvspan(1, k_cut, color="#FEF3C7", alpha=0.58, label=f"Estado transitorio eliminado (1–{k_cut-1})")
         ax1.axvspan(k_cut, int(k_vals.max()), color="#DCFCE7", alpha=0.35, label="Estado estable conservado")
         ax1.plot(k_vals, wq_raw, color="#94A3B8", linewidth=1.0, alpha=0.85, label="Media transversal Wq(k)")
-        ax1.plot(k_vals, wq_ma, color=self.palette["navy"], linewidth=2.2, label="Promedio móvil (ventana = 25)")
+        ax1.plot(k_vals, wq_ma, color=self.palette["navy"], linewidth=2.2, label="Welch centrado (ventana = 25)")
         ax1.axvline(k_cut, color=self.palette["red"], linestyle="--", linewidth=1.7,
-                    label=f"Corte k* = {k_cut} (~{t_cut:.0f} min)")
+                    label=f"Corte MSER-5 k* = {k_cut} (~{t_cut:.0f} min)")
         ax1.axhline(wq_all, color="#D97706", linestyle=":", linewidth=1.6,
                     label=f"Antes (con transitorio) = {wq_all:.2f} min")
         ax1.axhline(wq_ss, color=self.palette["teal"], linestyle="-.", linewidth=1.7,
@@ -529,10 +554,10 @@ class ParkingVisualizer:
                     label=f"Teórico M/G/1 = {wq_mg1:.2f} min")
 
         ax1.set_xlim(1, int(k_vals.max()))
-        ax1.set_ylim(0.0, max(float(np.max(wq_raw)), wq_mg1) * 1.38)
+        ax1.set_ylim(0.0, max(float(np.max(wq_raw)), wq_mg1) * 1.40)
         ax1.set_xlabel("Orden de llegada del vehículo k (E1: 3 Cajeros Mixtos)", fontsize=9.6)
         ax1.set_ylabel("Tiempo promedio de espera en cola Wq (min)", fontsize=9.6)
-        ax1.set_title("A. Detección del Período Transitorio por Promedio Móvil",
+        ax1.set_title("A. Corte MSER-5 y Promedio Móvil Centrado (Welch)",
                       fontsize=10.5, fontweight="bold", color="#0F172A")
         ax1.grid(True, linestyle=":", alpha=0.6)
         ax1.legend(loc="upper left", fontsize=7.4, frameon=True, ncol=2)
@@ -545,7 +570,11 @@ class ParkingVisualizer:
         v_antes = df_warmup["wq_con_transitorio_min"].values
         v_desp = df_warmup["wq_estado_estable_min"].values
         v_mg1 = df_warmup["wq_teorica_mg1_min"].values
-        sesgos = df_warmup["sesgo_subestimacion_wq_pct"].values
+        incrs = (
+            df_warmup["incremento_wq_pct"].values
+            if "incremento_wq_pct" in df_warmup.columns
+            else ((v_desp - v_antes) / v_antes * 100.0)
+        )
 
         ax2.bar(x - w, v_antes, width=w, color="#F59E0B", alpha=0.88, label="Antes (con transitorio)")
         ax2.bar(x, v_desp, width=w, color="#0F766E", alpha=0.90, label="Después (estado estable)")
@@ -555,7 +584,7 @@ class ParkingVisualizer:
             ax2.text(x[idx_b] - w * 1.05, v_antes[idx_b] + 0.18, f"{v_antes[idx_b]:.2f}",
                      ha="center", va="bottom", fontsize=6.6, fontweight="bold", color="#B45309")
             ax2.text(x[idx_b] + 0.04, max(v_desp[idx_b], v_mg1[idx_b]) + 0.72,
-                     f"{v_desp[idx_b]:.2f}\n(+{sesgos[idx_b]:.1f}%)",
+                     f"{v_desp[idx_b]:.2f}\n(+{incrs[idx_b]:.1f}%)",
                      ha="center", va="bottom", fontsize=6.7, fontweight="bold", color="#0F766E",
                      bbox=dict(boxstyle="square,pad=0.06", facecolor="white", edgecolor="none", alpha=0.85))
 
@@ -606,12 +635,15 @@ class ParkingVisualizer:
                      ha="center", va="bottom", fontsize=7.8, fontweight="bold", color="#1E3A8A")
 
         norm_row = df_isolated[df_isolated["tipo_usuario"] == "Normal"].iloc[0]
+        w_1k_norm = float(norm_row["w_horizonte_1000m_min"]) if "w_horizonte_1000m_min" in norm_row else float("nan")
+        ratio_norm = float(norm_row["ratio_crecimiento_6000_vs_1000"]) if "ratio_crecimiento_6000_vs_1000" in norm_row else float("nan")
         ax1.text(
-            0.03, 0.78,
-            f"Nota sobre perfil Normal (ρ = 1.00):\n"
-            f"Teoría: W → ∞ (límite inestable)\n"
-            f"Simulación finita (3000m): W_est = {norm_row['w_simulado_est_min']:.1f} min",
-            transform=ax1.transAxes, fontsize=7.9, color="#7F1D1D", fontweight="bold",
+            0.03, 0.75,
+            f"Perfil Normal (ρ = 1.00 — Inestable):\n"
+            f"Teoría M/M/1: W → ∞\n"
+            f"W(1000m) = {w_1k_norm:.1f} → W(6000m) = {norm_row['w_simulado_est_min']:.1f} m\n"
+            f"Crecimiento empírico: {ratio_norm:.2f}×",
+            transform=ax1.transAxes, fontsize=7.6, color="#7F1D1D", fontweight="bold",
             bbox=dict(boxstyle="round,pad=0.3", facecolor="#FEF2F2", edgecolor="#FCA5A5"),
         )
 

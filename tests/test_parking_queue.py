@@ -118,13 +118,14 @@ class TestParkingQueuingModel(unittest.TestCase):
         self.assertAlmostEqual(chi2_sf_df3(7.814728), 0.05, places=5)
 
     def test_steady_state_replicas_determination(self) -> None:
-        """Verifica que la técnica del estado estable converge y arroja ER(Wq) < 10%."""
-        n_off, df_conv = self.engine.determine_steady_state_replicas(max_replicas=150, base_seed=42)
+        """Verifica que la regla causal Law & Kelton converge y cumple ER(Wq) <= cota."""
+        n_off, df_conv = self.engine.determine_steady_state_replicas(max_replicas=250, base_seed=42)
         self.assertGreaterEqual(n_off, 30)
-        self.assertLessEqual(n_off, 150)
+        self.assertLessEqual(n_off, 250)
         row = df_conv[df_conv["replica"] == n_off].iloc[0]
-        self.assertLess(float(row["wq_er_pct"]), 10.0)
-        self.assertLessEqual(float(row["desviacion_asintotica_wq_pct"]), 2.5)
+        self.assertTrue(bool(row["convergio_estado_estable"]))
+        self.assertLessEqual(float(row["wq_er_pct"]), float(row["er_umbral_law_kelton_pct"]))
+        self.assertLessEqual(float(row["variacion_ventana_causal_wq_pct"]), 1.5)
 
     def test_non_clairvoyant_jsq_reduces_wait_below_mm1(self) -> None:
         """JSQ observable reduce Wq respecto a M/M/1 pero nunca supera al clarividente least_work."""
@@ -174,18 +175,20 @@ class TestParkingQueuingModel(unittest.TestCase):
             self.assertLess(float(s80.loc[skey, "espera_wq_er_pct"]), float(df_req.loc[skey, "wq_er_piloto_pct"]))
 
     def test_transient_elimination_increases_or_matches_steady_wait(self) -> None:
-        """Al iniciar vacío L(0)=0, eliminar el transitorio remueve la subestimación inicial."""
-        df_warm, df_curve, df_caj_w = self.engine.eliminate_transient_and_compare(num_replicas=40, base_seed=42)
+        """Al iniciar vacío L(0)=0, MSER-5 elimina el sesgo inicial sin truncar la jornada."""
+        df_warm, df_curve, df_caj_w = self.engine.eliminate_transient_and_compare(num_replicas=50, base_seed=42)
         self.assertEqual(len(df_warm), len(SCENARIO_DEFINITIONS))
-        self.assertEqual(len(df_curve), 500)
+        self.assertEqual(len(df_curve), 550)
         self.assertEqual(len(df_caj_w), 3)
         for _, row in df_warm.iterrows():
-            self.assertGreaterEqual(int(row["k_corte_vehiculos"]), 60)
+            self.assertGreaterEqual(int(row["k_corte_vehiculos"]), 21)
             self.assertGreaterEqual(float(row["wq_estado_estable_min"]), float(row["wq_con_transitorio_min"]))
 
     def test_isolated_mm1_validation_passes_for_stable_types(self) -> None:
-        """Valida p > 0.05 contra teoría M/M/1 pura para Rápido, Lento y Muy lento."""
-        df_iso = self.engine.validate_isolated_mm1_by_user_type(num_replicas=60, base_seed=42, horizon_minutes=3000.0)
+        """Valida p > 0.05 contra teoría M/M/1 pura para Rápido, Lento y Muy lento a 6000 min."""
+        df_iso = self.engine.validate_isolated_mm1_by_user_type(
+            num_replicas=100, base_seed=42, horizon_minutes=6000.0, warmup_frac=0.30
+        )
         stable = df_iso[df_iso["estable"]]
         self.assertEqual(len(stable), 3)
         self.assertTrue((stable["p_valor_w"] > 0.05).all())
@@ -193,20 +196,183 @@ class TestParkingQueuingModel(unittest.TestCase):
     def test_vv_matrix_consistency_and_dynamic_dictamen(self) -> None:
         """Verifica consistencia entre resumen oficial y matriz V&V (Little, Chi2, criterios)."""
         exp = self.engine.run_multi_replica_experiment(num_replicas=50, base_seed=42)
+        exp_jsq = self.engine.run_multi_replica_experiment(num_replicas=50, base_seed=42, routing_mode="shortest_queue")
         df_warm, _, _ = self.engine.eliminate_transient_and_compare(num_replicas=50, base_seed=42)
-        df_vv = self.engine.compute_vv_and_critical_matrix(exp, df_warm).set_index("escenario")
+        df_vv = self.engine.compute_vv_and_critical_matrix(exp, df_warm, res_jsq=exp_jsq).set_index("escenario")
         df_sum = exp["df_summary"].set_index("escenario")
         df_caj = exp["df_cashier_summary"]
 
         self.assertTrue(bool(df_vv["verificacion_little_ok"].all()))
+        self.assertTrue((df_vv["verificacion_little_jsq_max_err"] < 1e-10).all())
         self.assertGreater(float(df_vv["calibracion_chi2_pval"].iloc[0]), 0.01)
         self.assertIn("Crítico", str(df_vv.loc["E1_3_Mixtos", "criterio_wq"]))
         self.assertIn("NO RECOMENDADO", str(df_vv.loc["E1_3_Mixtos", "dictamen_global"]))
 
+        df_warm_idx = df_warm.set_index("escenario")
         for skey in df_vv.index:
-            self.assertEqual(str(df_sum.loc[skey, "regimen_estabilidad"]), str(df_vv.loc[skey, "criterio_rho"]))
-            c_max_p5 = float(df_caj[df_caj["escenario"] == skey]["prob_wq_mayor_5m_prom"].max())
-            self.assertAlmostEqual(float(df_vv.loc[skey, "prob_wq_mayor_5m_peor_cajero_pct"]), c_max_p5, places=8)
+            self.assertAlmostEqual(
+                float(df_vv.loc[skey, "peor_cajero_wq_estable_min"]),
+                float(df_warm_idx.loc[skey, "peor_cajero_wq_estado_estable_min"]),
+                places=8,
+            )
+            self.assertAlmostEqual(
+                float(df_vv.loc[skey, "prob_wq_mayor_5m_peor_cajero_estable_pct"]),
+                float(df_warm_idx.loc[skey, "prob_wq_mayor_5m_peor_cajero_estado_estable_pct"]),
+                places=8,
+            )
+        self.assertEqual(str(df_sum.loc["E4_6_Mixtos", "regimen_estabilidad"]), "Subutilizado (<45%)")
+        self.assertIn("REDUNDANTE", str(df_vv.loc["E4_6_Mixtos", "dictamen_global"]))
+
+    def test_parameter_validation_rejects_missing_service_or_arrival_keys(self) -> None:
+        """_validate_parameters rechaza llaves faltantes en service_means o arrival_means (N5)."""
+        with self.assertRaises(ValueError):
+            ParkingQueuingModel(service_means={"Rápido": 1.0, "Normal": 3.0})
+        with self.assertRaises(ValueError):
+            ParkingQueuingModel(arrival_means={"Rápido": 3.0, "Normal": 3.0, "Lento": 5.0})
+
+    def test_effective_service_time_uses_instance_service_means(self) -> None:
+        """_effective_service_time escala base_service_time del modelo sin acoplarse a globales (M4)."""
+        custom_srv = {"Rápido": 2.0, "Normal": 6.0, "Lento": 8.0, "Muy lento": 12.0}
+        m_custom = ParkingQueuingModel(service_means=custom_srv)
+        arr = m_custom.generate_exit_arrivals(seed=42)
+        lento_v = next(v for v in arr if v.user_type == "Lento")
+        eff = ParkingSimulationEngine._effective_service_time(lento_v, ux_factor_slow=0.75)
+        self.assertAlmostEqual(eff, lento_v.unit_service_exp * 8.0 * 0.75, places=10)
+
+    def test_time_integral_littles_law_independent_across_modes(self) -> None:
+        """Verifica L_q por integración temporal de Q(t) en random_mm1, JSQ y single_queue_mgc (M3, M5)."""
+        arr = self.model.generate_exit_arrivals(seed=42)
+        for mode in ("random_mm1", "shortest_queue", "single_queue_mgc"):
+            res = self.engine.simulate_single_replica("E2_4_Mixtos", arr, routing_seed=99, routing_mode=mode)
+            self.assertLess(float(res["max_little_err"]), 1e-10, msg=f"Little fallo en modo {mode}")
+
+    def test_causal_steady_state_replicas_zero_lookahead(self) -> None:
+        """La regla Law & Kelton da el mismo n_det aunque se corte el horizonte en n_det (B4)."""
+        _, df_full = self.engine.determine_steady_state_replicas(max_replicas=250, base_seed=42)
+        n_det_full = int(df_full["n_detectado_exacto"].iloc[0])
+        _, df_trunc = self.engine.determine_steady_state_replicas(max_replicas=n_det_full, base_seed=42)
+        self.assertEqual(int(df_trunc["n_detectado_exacto"].iloc[0]), n_det_full)
+
+    def test_single_queue_mgc_and_hyperexponential_arrivals_sensitivity(self) -> None:
+        """Cola única M/G/c mejora sobre JSQ y llegadas H4 (Ca2=1.257) aumentan Wq frente a Poisson (B2, M5)."""
+        _, _, ca2 = self.model.expected_interarrival_moments_h4()
+        self.assertGreater(ca2, 1.2)
+        r_rand = self.engine.run_multi_replica_experiment(30, base_seed=42, routing_mode="random_mm1")
+        r_jsq = self.engine.run_multi_replica_experiment(30, base_seed=42, routing_mode="shortest_queue")
+        r_mgc = self.engine.run_multi_replica_experiment(30, base_seed=42, routing_mode="single_queue_mgc")
+        wq_rand = float(r_rand["df_summary"].set_index("escenario").loc["E2_4_Mixtos", "espera_wq_media_min"])
+        wq_jsq = float(r_jsq["df_summary"].set_index("escenario").loc["E2_4_Mixtos", "espera_wq_media_min"])
+        wq_mgc = float(r_mgc["df_summary"].set_index("escenario").loc["E2_4_Mixtos", "espera_wq_media_min"])
+        self.assertLessEqual(wq_mgc, wq_jsq + 0.05)
+        self.assertLess(wq_jsq, wq_rand)
+
+        scen_e1 = {"E1_3_Mixtos": SCENARIO_DEFINITIONS["E1_3_Mixtos"]}
+        r_p = self.engine.run_multi_replica_experiment(
+            40, base_seed=42, scenarios=scen_e1, routing_mode="single_queue_mgc", arrival_process="poisson"
+        )
+        r_h = self.engine.run_multi_replica_experiment(
+            40, base_seed=42, scenarios=scen_e1, routing_mode="single_queue_mgc", arrival_process="hyperexponential"
+        )
+        self.assertGreater(
+            float(r_h["df_summary"]["espera_wq_media_min"].iloc[0]),
+            float(r_p["df_summary"]["espera_wq_media_min"].iloc[0]),
+        )
+
+    def test_paired_crn_comparisons_and_e7_specific_calibration(self) -> None:
+        """IC pareados CRN detectan E7 < E2 y simetría entre cajeros E1; E7 calibra su propio servicio (M6)."""
+        exp = self.engine.run_multi_replica_experiment(60, base_seed=42)
+        df_p = self.engine.compute_paired_crn_comparisons(exp).set_index("contraste")
+        self.assertLess(float(df_p.loc["E7_4_Mix_UX - E2_4_Mixtos", "delta_pareado"]), 0.0)
+        self.assertTrue(bool(df_p.loc["E7_4_Mix_UX - E2_4_Mixtos", "significativo_95"]))
+
+        for pair_lbl in ("Cajero 1 - Cajero 2", "Cajero 1 - Cajero 3", "Cajero 3 - Cajero 2"):
+            self.assertGreater(float(df_p.loc[pair_lbl, "p_valor"]), 0.05)
+            self.assertFalse(bool(df_p.loc[pair_lbl, "significativo_95"]))
+
+        exp_ind = self.engine.run_multi_replica_experiment(40, base_seed=42, independent_arrivals_per_scenario=True)
+        df_warm_ind, _, _ = self.engine.eliminate_transient_and_compare(num_replicas=40, base_seed=42)
+        df_vv_ind = self.engine.compute_vv_and_critical_matrix(exp_ind, df_warm_ind).set_index("escenario")
+        self.assertLess(float(df_vv_ind.loc["E7_4_Mix_UX", "calibracion_srv_max_rel_err_pct"]), 5.0)
+        self.assertNotAlmostEqual(
+            float(df_vv_ind.loc["E7_4_Mix_UX", "calibracion_srv_max_rel_err_pct"]),
+            float(df_vv_ind.loc["E1_3_Mixtos", "calibracion_srv_max_rel_err_pct"]),
+            places=6,
+        )
+
+    def test_isolated_normal_empirical_divergence_verified(self) -> None:
+        """El perfil crítico Normal (rho=1) crece empíricamente al menos 1.5x entre 1000m y 6000m (M3)."""
+        df_iso = self.engine.validate_isolated_mm1_by_user_type(
+            num_replicas=60, base_seed=42, horizon_minutes=6000.0, warmup_frac=0.30
+        ).set_index("tipo_usuario")
+        ratio = float(df_iso.loc["Normal", "ratio_crecimiento_6000_vs_1000"])
+        self.assertGreaterEqual(ratio, 1.5)
+        self.assertIn("Divergencia empírica verificada", str(df_iso.loc["Normal", "resultado_validacion"]))
+
+    def test_e4_redundant_subutilized_and_steady_state_vv_homogeneous(self) -> None:
+        """E4 (6 Mixtos) debe clasificarse Subutilizado/REDUNDANTE y V&V debe evaluar régimen post-MSER-5 homogéneo."""
+        exp = self.engine.run_multi_replica_experiment(60, base_seed=42)
+        df_warm, _, _ = self.engine.eliminate_transient_and_compare(num_replicas=60, base_seed=42)
+        df_vv = self.engine.compute_vv_and_critical_matrix(exp, df_warm).set_index("escenario")
+        df_sum = exp["df_summary"].set_index("escenario")
+        df_warm_idx = df_warm.set_index("escenario")
+
+        self.assertEqual(str(df_sum.loc["E4_6_Mixtos", "regimen_estabilidad"]), "Subutilizado (<45%)")
+        self.assertEqual(str(df_vv.loc["E4_6_Mixtos", "criterio_rho"]), "Subutilizado (<45%)")
+        self.assertIn("REDUNDANTE", str(df_vv.loc["E4_6_Mixtos", "dictamen_global"]))
+        self.assertNotIn("ÓPTIMO", str(df_vv.loc["E4_6_Mixtos", "dictamen_global"]))
+
+        for skey in df_vv.index:
+            self.assertAlmostEqual(
+                float(df_vv.loc[skey, "rho_peor_cajero_estable_pct"]),
+                float(df_warm_idx.loc[skey, "rho_peor_cajero_estado_estable_pct"]),
+                places=8,
+            )
+
+    def test_h4_crn_coupled_monotonicity_5000m_and_input_guards(self) -> None:
+        """Verifica CRN acoplado en H4/H4/1, validación estacionaria larga y rechazo de entradas vacías o NaN."""
+        a_p = self.model.generate_exit_arrivals(seed=42, arrival_process="poisson")
+        a_h = self.model.generate_exit_arrivals(seed=42, arrival_process="hyperexponential")
+        n_common = min(len(a_p), len(a_h))
+        self.assertGreater(n_common, 100)
+        for i in range(n_common):
+            self.assertEqual(a_p[i].user_type, a_h[i].user_type)
+            self.assertAlmostEqual(a_p[i].unit_service_exp, a_h[i].unit_service_exp, places=12)
+
+        scen_e1 = {"E1_3_Mixtos": SCENARIO_DEFINITIONS["E1_3_Mixtos"]}
+        scen_e7 = {"E7_4_Mix_UX": SCENARIO_DEFINITIONS["E7_4_Mix_UX"]}
+        r_p7 = self.engine.run_multi_replica_experiment(80, base_seed=42, scenarios=scen_e7, arrival_process="poisson")
+        r_h7 = self.engine.run_multi_replica_experiment(80, base_seed=42, scenarios=scen_e7, arrival_process="hyperexponential")
+        self.assertGreater(
+            float(r_h7["df_summary"]["espera_wq_media_min"].iloc[0]),
+            float(r_p7["df_summary"]["espera_wq_media_min"].iloc[0]),
+        )
+        r_p1m = self.engine.run_multi_replica_experiment(
+            80, base_seed=42, scenarios=scen_e1, routing_mode="single_queue_mgc", arrival_process="poisson"
+        )
+        r_h1m = self.engine.run_multi_replica_experiment(
+            80, base_seed=42, scenarios=scen_e1, routing_mode="single_queue_mgc", arrival_process="hyperexponential"
+        )
+        self.assertGreater(
+            float(r_h1m["df_summary"]["espera_wq_media_min"].iloc[0]),
+            float(r_p1m["df_summary"]["espera_wq_media_min"].iloc[0]),
+        )
+
+        sub_scen = {
+            "E1_3_Mixtos": SCENARIO_DEFINITIONS["E1_3_Mixtos"],
+            "E7_4_Mix_UX": SCENARIO_DEFINITIONS["E7_4_Mix_UX"],
+        }
+        df_s5k = self.engine.validate_stationary_mg1_long_horizon(
+            num_replicas=20, horizon_minutes=3000.0, warmup_frac=0.20, base_seed=42, scenarios=sub_scen
+        )
+        self.assertTrue(bool(df_s5k["validado_alpha_05"].all()))
+
+        with self.assertRaises(ValueError):
+            ParkingQueuingModel(user_type_probs={})
+        with self.assertRaises(ValueError):
+            ParkingQueuingModel(service_means={"Rápido": float("nan"), "Normal": 3.0, "Lento": 4.0, "Muy lento": 6.0})
+        bad_scen = {"E_BAD": {"nombre": "Bad", "nombre_corto": "Bad", "num_cajeros": 1, "ux_factor_slow": 0.0, "cajeros": [("C1", "Mixto")]}}
+        with self.assertRaises(ValueError):
+            self.engine.simulate_single_replica("E_BAD", a_p[:5], routing_seed=1, scenarios=bad_scen)
 
 
 if __name__ == "__main__":

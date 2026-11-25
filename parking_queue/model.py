@@ -1,11 +1,13 @@
 """
-Modelo Teórico M/M/1, Parametrización Axiomática y Generador de Llegadas
+Modelo Teórico M/M/1 (Perfiles Aislados) y M/H4/1 — M/G/1 (Mezcla Hiperexponencial)
 para el Sistema de Pago de Parqueaderos del Centro Comercial Supercentro.
 
 Cumple exactamente con las especificaciones de la Actividad Didáctica 2-M4:
-- Punto de salida con 3 cajeros base independientes M/M/1, filas independientes,
-  sin cambio de fila ni deserción.
-- Horizonte por réplica: 1000 minutos (según guía de laboratorio del curso).
+- Punto de salida con 3 cajeros base independientes, disciplina FCFS, sin cambio de fila ni deserción.
+- Cada perfil aislado sigue un modelo M/M/1; al agrupar los 4 perfiles en cajeros mixtos o
+  segregados, la mezcla probabilística produce un servicio hiperexponencial H4 (M/G/1) con
+  C_s^2 = 1.5231 > 1, donde la fórmula de Pollaczek–Khinchine es identidad exacta bajo arribos Poisson.
+- Horizonte operativo por réplica: 1000 minutos (según guía de laboratorio del curso).
 - Perfiles de usuario (Exponenciales de servicio y llegada):
   * Rápido    (25.0 %): E[S] = 1.0 min, E[IA] = 3.0 min
   * Normal    (20.0 %): E[S] = 3.0 min, E[IA] = 3.0 min
@@ -14,12 +16,22 @@ Cumple exactamente con las especificaciones de la Actividad Didáctica 2-M4:
 """
 
 from dataclasses import dataclass
+import math
 from typing import Dict, List, Optional, Set, Tuple
 import numpy as np
 
 
 BASE_CASHIERS: int = 3
 SIM_MINUTES: float = 1000.0
+
+
+def replica_stream_seed(base_seed: int, replica: int, stream_id: int = 0) -> int:
+    """
+    Genera una semilla determinista invariante al prefijo mediante SeedSequence([base, stream, r])
+    para aislar flujos independientes (0=llegadas, 1=enrutamiento, >=10=perfiles aislados).
+    """
+    ss = np.random.SeedSequence([int(base_seed), int(stream_id), int(replica)])
+    return int(ss.generate_state(1)[0])
 
 USER_TYPES: List[str] = ["Rápido", "Normal", "Lento", "Muy lento"]
 
@@ -215,34 +227,47 @@ class ParkingQueuingModel:
         base_cashiers: int = BASE_CASHIERS,
         horizon_minutes: float = SIM_MINUTES,
     ):
-        self.user_type_probs = dict(user_type_probs or USER_TYPE_PROBS)
-        self.service_means = dict(service_means or SERVICE_MEANS)
-        self.arrival_means = dict(arrival_means or ARRIVAL_MEANS)
+        self.user_type_probs = dict(USER_TYPE_PROBS if user_type_probs is None else user_type_probs)
+        self.service_means = dict(SERVICE_MEANS if service_means is None else service_means)
+        self.arrival_means = dict(ARRIVAL_MEANS if arrival_means is None else arrival_means)
         self.base_cashiers = int(base_cashiers)
         self.horizon_minutes = float(horizon_minutes)
         self._validate_parameters()
 
     def _validate_parameters(self) -> None:
-        """Verifica validez matemática de probabilidades, medias exponenciales y horizonte."""
+        """Verifica validez matemática de probabilidades, llaves, medias exponenciales y horizonte."""
         if self.base_cashiers <= 0:
             raise ValueError("El número base de cajeros debe ser mayor que cero.")
-        if self.horizon_minutes <= 0:
-            raise ValueError("El horizonte de simulación debe ser positivo.")
+        if not math.isfinite(self.horizon_minutes) or self.horizon_minutes <= 0:
+            raise ValueError("El horizonte de simulación debe ser positivo y finito.")
         if set(self.user_type_probs.keys()) != set(USER_TYPES):
             raise ValueError("Las llaves de probabilidades deben coincidir con USER_TYPES.")
-        if any(v < 0.0 for v in self.user_type_probs.values()):
-            raise ValueError("No se permiten probabilidades negativas.")
+        if set(self.service_means.keys()) != set(USER_TYPES):
+            raise ValueError("Las llaves de service_means deben coincidir con USER_TYPES.")
+        if set(self.arrival_means.keys()) != set(USER_TYPES):
+            raise ValueError("Las llaves de arrival_means deben coincidir con USER_TYPES.")
+        if any((not math.isfinite(float(v)) or float(v) < 0.0) for v in self.user_type_probs.values()):
+            raise ValueError("No se permiten probabilidades negativas o no finitas.")
         if not np.isclose(sum(self.user_type_probs.values()), 1.0, atol=1e-9):
             raise ValueError(
                 f"Las probabilidades de usuario deben sumar 1.0 (actual: {sum(self.user_type_probs.values())})."
             )
         for u in USER_TYPES:
-            if self.service_means[u] <= 0.0 or self.arrival_means[u] <= 0.0:
-                raise ValueError(f"Medias exponenciales inválidas para el tipo {u}.")
+            sm = float(self.service_means[u])
+            am = float(self.arrival_means[u])
+            if not math.isfinite(sm) or not math.isfinite(am) or sm <= 0.0 or am <= 0.0:
+                raise ValueError(f"Medias exponenciales inválidas o no finitas para el tipo {u}.")
 
     def expected_interarrival_per_base_cashier(self) -> float:
         """Tiempo medio entre llegadas por cajero en el diseño base E[IA_c] (min)."""
         return sum(self.user_type_probs[u] * self.arrival_means[u] for u in USER_TYPES)
+
+    def expected_interarrival_moments_h4(self) -> Tuple[float, float, float]:
+        """Calcula E[IA], E[IA^2] y C_a^2 si las llegadas por cajero siguieran mezcla H4."""
+        e1 = self.expected_interarrival_per_base_cashier()
+        e2 = sum(self.user_type_probs[u] * 2.0 * (self.arrival_means[u] ** 2) for u in USER_TYPES)
+        ca2 = (e2 - e1 ** 2) / (e1 ** 2)
+        return float(e1), float(e2), float(ca2)
 
     def base_cashier_arrival_rate(self) -> float:
         """Tasa de llegada por cajero en el escenario base de 3 cajeros (vehículos/min)."""
@@ -329,7 +354,12 @@ class ParkingQueuingModel:
         num_cashiers_with_role: int,
         ux_factor_slow: float = 1.0,
     ) -> MM1AnalyticalMetrics:
-        """Calcula métricas analíticas M/M/1 y M/G/1 exactas para un cajero independiente."""
+        """
+        Calcula métricas analíticas de un cajero independiente bajo mezcla M/H4/1:
+        - Pollaczek–Khinchine M/G/1 (`wq_mg1`) es la identidad exacta para la mezcla H4.
+        - `wq_queue` y `prob_wq_gt_5min` corresponden a la referencia exponencial M/M/1
+          homóloga (útil como cota comparativa; el riesgo real de cola se mide en DES M/H4/1).
+        """
         if num_cashiers_with_role <= 0:
             raise ValueError("El número de cajeros con el rol debe ser mayor que cero.")
 
@@ -375,9 +405,13 @@ class ParkingQueuingModel:
             prob_wq_gt_5min=prob_wq_gt_5min,
         )
 
-    def analyze_scenario_theoretically(self, scenario_key: str) -> Dict[str, object]:
-        """Calcula métricas analíticas ponderadas para un escenario completo."""
-        cfg = SCENARIO_DEFINITIONS[scenario_key]
+    def analyze_scenario_theoretically(
+        self,
+        scenario_key: str,
+        scenario_cfg: Optional[Dict[str, object]] = None,
+    ) -> Dict[str, object]:
+        """Calcula métricas analíticas ponderadas para un escenario dado."""
+        cfg = scenario_cfg if scenario_cfg is not None else SCENARIO_DEFINITIONS[scenario_key]
         cajeros = cfg["cajeros"]
         ux_factor = float(cfg.get("ux_factor_slow", 1.0))
 
@@ -428,14 +462,34 @@ class ParkingQueuingModel:
             "cashiers": cashier_metrics,
         }
 
-    def generate_exit_arrivals(self, seed: int) -> List[ArrivalVehicle]:
+    def generate_exit_arrivals(
+        self,
+        seed: int,
+        arrival_process: str = "poisson",
+        demand_multiplier: float = 1.0,
+    ) -> List[ArrivalVehicle]:
         """
         Genera la secuencia estocástica de vehículos que llegan al punto de salida
-        durante `horizon_minutes` (1000 min) como un proceso de Poisson exacto con tasa
-        `exit_arrival_rate`, utilizando PCG64 para reproducibilidad determinista.
+        durante `horizon_minutes` (por defecto 1000 min) utilizando PCG64.
+
+        arrival_process:
+          - 'poisson': proceso de Poisson homogéneo (C_a^2 = 1.0) con tasa agregada
+            `exit_arrival_rate * demand_multiplier`, donde Pollaczek–Khinchine M/G/1 es exacto.
+          - 'hyperexponential': mezcla H4 de tiempos entre arribos (C_a^2 = 1.2569)
+            con idéntica media global para análisis de sensibilidad GI/G/1 (H4/H4/1).
         """
+        if arrival_process not in ("poisson", "hyperexponential"):
+            raise ValueError(f"Proceso de llegadas desconocido: {arrival_process}")
+        if not math.isfinite(float(demand_multiplier)) or demand_multiplier <= 0.0:
+            raise ValueError("demand_multiplier debe ser positivo y finito.")
+
         rng = np.random.default_rng(seed)
-        lam_exit = self.exit_arrival_rate()
+        rng_h4_mix = (
+            np.random.default_rng(np.random.SeedSequence([int(seed), 997]))
+            if arrival_process == "hyperexponential"
+            else None
+        )
+        lam_exit = self.exit_arrival_rate() * float(demand_multiplier)
         mean_ia_exit = 1.0 / lam_exit
         probs = [self.user_type_probs[u] for u in USER_TYPES]
 
@@ -444,7 +498,14 @@ class ParkingQueuingModel:
         vid = 1
 
         while True:
-            ia_time = float(rng.exponential(scale=mean_ia_exit))
+            if arrival_process == "poisson":
+                ia_time = float(rng.exponential(scale=mean_ia_exit))
+            else:
+                assert rng_h4_mix is not None
+                u_ia = str(rng_h4_mix.choice(USER_TYPES, p=probs))
+                ia_mean_h4 = self.arrival_means[u_ia] / (self.base_cashiers * float(demand_multiplier))
+                ia_time = float(rng.exponential(scale=ia_mean_h4))
+
             current_time += ia_time
             if current_time > self.horizon_minutes:
                 break

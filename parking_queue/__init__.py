@@ -17,6 +17,7 @@ from .model import (
     MM1AnalyticalMetrics,
     ParkingQueuingModel,
     classify_utilization_regime,
+    replica_stream_seed,
 )
 from .simulation import (
     ParkingSimulationEngine,
@@ -42,6 +43,7 @@ __all__ = [
     "ParkingVisualizer",
     "chi2_sf_df3",
     "classify_utilization_regime",
+    "replica_stream_seed",
     "t_crit_two_sided",
     "two_sided_t_pvalue",
 ]

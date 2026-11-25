@@ -82,13 +82,13 @@ def main() -> None:
         f"E[S] = {es_mix:.3f} min | E[S^2] = {es2_mix:.2f} min² | ρ_base = {model.base_cashier_arrival_rate()*es_mix*100:.2f}%"
     )
 
-    # 2. Determinación del número oficial de réplicas N* por estado estable sobre la media
-    print("\n[2/6] Determinando Número Oficial de Réplicas N* (Estado Estable y ER%)...")
+    # 2. Determinación causal del número oficial de réplicas N* (Law & Kelton)
+    print("\n[2/6] Determinando Número Oficial de Réplicas N* (Regla Causal Law & Kelton)...")
     n_official, df_conv = engine.determine_steady_state_replicas(
-        max_replicas=150,
+        max_replicas=250,
         base_seed=42,
-        stability_tol_pct=2.0,
-        er_target_pct=7.5,
+        gamma_rel_error=0.06,
+        trailing_tol_pct=1.5,
         sustained_window=20,
         min_replicas=30,
     )
@@ -100,9 +100,10 @@ def main() -> None:
     df_sample_n.to_csv("results/tamano_muestra_piloto10_er.csv", index=False, encoding="utf-8-sig")
 
     n_det = int(df_conv["n_detectado_exacto"].iloc[0])
+    er_lk = float(df_conv["er_umbral_law_kelton_pct"].iloc[0])
     row_noff = df_conv[df_conv["replica"] == n_official].iloc[0]
     print(
-        f"  • Estabilización ±2% y ER<=7.5% detectada en r = {n_det} -> N* oficial seleccionado = {n_official} réplicas"
+        f"  • Detección causal Law & Kelton (ER <= {er_lk:.2f}%, ventana <= 1.5%) en r = {n_det} -> N* oficial = {n_official} réplicas"
     )
     print(
         f"  • En N* = {n_official}: Wq = {row_noff['wq_media_acumulada_min']:.2f} min "
@@ -196,37 +197,61 @@ def main() -> None:
             f"W={ur['w_empirico_min']:5.2f} m"
         )
 
-    # 4. Punto E (Eliminación del Estado Transitorio) y Punto D (Validación y Matriz V&V)
-    print("\n[4/6] Ejecutando Eliminación del Estado Transitorio (Warm-up) y Protocolo V&V...")
+    # 4. Punto E (Eliminación MSER-5 del Transitorio), Punto D (V&V, Validación 5000m) y Sensibilidad Nivel B
+    print("\n[4/6] Ejecutando MSER-5 (Warm-up), Validación 5000m, IC Pareados y Sensibilidad Nivel B...")
     df_warm, df_curve_e1, df_warm_caj = engine.eliminate_transient_and_compare(
         num_replicas=n_official,
         base_seed=42,
         window=25,
-        k_horizon=500,
+        k_horizon=550,
+        batch_size=5,
+        min_batch_d=4,
+        max_batch_d=55,
     )
-    df_vv = engine.compute_vv_and_critical_matrix(res_off, df_warm)
-    df_iso_val = engine.validate_isolated_mm1_by_user_type(num_replicas=100, base_seed=42, horizon_minutes=3000.0)
+    df_stat5k = engine.validate_stationary_mg1_long_horizon(
+        num_replicas=80,
+        horizon_minutes=5000.0,
+        warmup_frac=0.20,
+        base_seed=42,
+    )
+    df_paired = engine.compute_paired_crn_comparisons(res_off)
+    df_sens_ext = engine.run_extended_sensitivity_analyses(num_replicas=n_official, base_seed=42)
+    df_vv = engine.compute_vv_and_critical_matrix(
+        res_off,
+        df_warm,
+        res_jsq=res_jsq,
+        df_stat5k=df_stat5k,
+    )
+    df_iso_val = engine.validate_isolated_mm1_by_user_type(
+        num_replicas=100,
+        base_seed=42,
+        horizon_minutes=6000.0,
+        warmup_frac=0.30,
+    )
 
     df_warm.to_csv("results/eliminacion_transitorio_antes_despues.csv", index=False, encoding="utf-8-sig")
     df_curve_e1.to_csv("results/curva_warmup_e1_3mixtos.csv", index=False, encoding="utf-8-sig")
     df_warm_caj.to_csv("results/warmup_cajeros_e1_antes_despues.csv", index=False, encoding="utf-8-sig")
     df_vv.to_csv("results/matriz_vv_y_criterios_criticos.csv", index=False, encoding="utf-8-sig")
     df_iso_val.to_csv("results/validacion_mm1_tipos_aislados.csv", index=False, encoding="utf-8-sig")
+    df_stat5k.to_csv("results/validacion_estacionaria_5000m.csv", index=False, encoding="utf-8-sig")
+    df_paired.to_csv("results/ic_pareados_crn_escenarios.csv", index=False, encoding="utf-8-sig")
+    df_sens_ext.to_csv("results/sensibilidad_extendida_nivel_b.csv", index=False, encoding="utf-8-sig")
 
     print("\n  [Puntos C y D] Resumen Comparativo de Estrategias y Validación V&V:")
     for _, rv in df_vv.iterrows():
         print(
-            f"      - {rv['nombre_corto']:14s} | Wq={rv['wq_sim_min']:5.2f}m | W={rv['w_sim_min']:5.2f}m | "
-            f"ρ_max={rv['rho_max_pct']:4.1f}% | P(>5m)={rv['prob_wq_mayor_5m_peor_cajero_pct']:4.1f}% | "
-            f"p_MG1={rv['p_valor_vs_mg1']:.3f} | {rv['dictamen_global']}"
+            f"      - {rv['nombre_corto']:14s} | Wq(1k)={rv['wq_sim_min']:5.2f}m | Wq(Est)={rv['wq_estable_min']:5.2f}m | "
+            f"p_MG1={rv['p_valor_vs_mg1']:.3f} | p_5k={rv['p_valor_estacionario_5000m']:.3f} | "
+            f"P(>5m)={rv['prob_wq_mayor_5m_peor_cajero_pct']:4.1f}% | {rv['dictamen_global']}"
         )
 
-    print("\n  [Punto E] Eliminación del Transitorio (Antes vs. Después):")
+    print("\n  [Punto E] Eliminación MSER-5 del Transitorio (Antes vs. Después):")
     for _, rw in df_warm.iterrows():
         print(
-            f"      - {rw['nombre_corto']:14s} | k*={int(rw['k_corte_vehiculos']):3d} (~{rw['tiempo_corte_aprox_min']:5.1f}m) | "
+            f"      - {rw['nombre_corto']:14s} | d*={int(rw['d_optimo_mser']):2d} k*={int(rw['k_corte_vehiculos']):3d} (~{rw['tiempo_corte_aprox_min']:5.1f}m) | "
             f"Antes={rw['wq_con_transitorio_min']:5.2f}m -> Después={rw['wq_estado_estable_min']:5.2f}m "
-            f"(M/G/1={rw['wq_teorica_mg1_min']:5.2f}m, subest={rw['sesgo_subestimacion_wq_pct']:4.1f}%)"
+            f"(+{rw['incremento_wq_pct']:4.1f}% incr., {rw['sesgo_subestimacion_wq_pct']:4.1f}% subest.)"
         )
 
     # 5. Generación de 7 Figuras Científicas a 300 DPI
@@ -236,8 +261,8 @@ def main() -> None:
         viz.plot_steady_state_replicas(df_conv, wq_mg1_base),
         viz.plot_base_cashier_performance(res_off["df_cashiers"], df_caj),
         viz.plot_user_types_summary(model, base_rep, wt_base.reset_index()),
-        viz.plot_scenarios_strategy_comparison(df_sum, df_jsq_sum),
-        viz.plot_vv_process_diagram(df_vv),
+        viz.plot_scenarios_strategy_comparison(df_sum, df_jsq_sum, df_sens_ext=df_sens_ext),
+        viz.plot_vv_process_diagram(df_vv, num_tests=25),
         viz.plot_transient_elimination_before_after(df_curve_e1, df_warm),
         viz.plot_isolated_validation_and_cashier_balance(df_iso_val, df_caj),
     ]
@@ -245,8 +270,8 @@ def main() -> None:
         print(f"      [+] Figura guardada: {f}")
 
     # 6. Cierre
-    print("\n[6/6] Pipeline experimental completado exitosamente.")
-    print("  • Todos los 14 CSVs y las 7 figuras quedaron exportados en 'results/'.")
+    print("\n[6/6] Pipeline experimental Nivel B completado exitosamente.")
+    print("  • Todos los 17 CSVs y las 7 figuras quedaron exportados en 'results/'.")
     print("=" * 88)
 
 
