@@ -624,18 +624,16 @@ def build_document(output_filename: str = None) -> None:
     add_rich_runs(p_res_t, "Resumen", font_size=11.0, color=COLOR_SECONDARY, bold=True)
 
     p_res = add_p(
-        f"Tres quioscos de pago por salida no alcanzan para atender el tráfico vehicular de Supercentro. Más de la mitad de quienes salen (55 %) demora "
-        f"entre cuatro y seis minutos digitando su placa frente a la pantalla; por eso las colas crecen con rapidez. Programamos en Python un simulador "
-        f"de eventos discretos (DES) con jornadas de 1000 minutos y flujos reproducibles PCG64 (SeedSequence, semilla 42). Aplicando la regla secuencial "
-        f"causal de Law y Kelton sin mirar datos futuros, fijamos N^{{*}} = {n_off} réplicas (W_{{q}} = {wq_e1:.2f} min, IC 95 % [{wq_e1_l:.2f}, {wq_e1_u:.2f}], "
-        f"ER = {er_wq_e1:.2f} %). Con {tot_veh_jornada:.2f} vehículos por jornada en el esquema actual, el {c_min_w['cajero']} registró el menor promedio "
-        f"muestral (W = {c_min_w['atencion_w_prom']:.3f} min) y el {c_max_w['cajero']} el mayor (W = {c_max_w['atencion_w_prom']:.3f} min), diferencia "
-        f"no significativa (p ≥ {p_sym_min:.2f}) atribuible al azar muestral. Evaluando siete diseños bajo Números Aleatorios Comunes (CRN), tres "
-        f"cajeros incumplen por amplio margen (P(W_{{q}} > 5 m) = {p5_e1_glob:.1f} % global y {p5_e1_peor:.1f} % en el peor servidor). Recomendamos ampliar "
-        f"a 4 cajeros mixtos con reconocimiento automático de placa LPR/QR en el software (-25 % en servicio lento/muy lento): así W_{{q}} cae a "
-        f"{wq_e7:.2f} min (W = {w_e7:.2f} min), baja a {wq_e7_jsq:.2f} min al señalizar la fila más corta (JSQ) y a {wq_e7_mgc:.2f} min con cola única "
-        f"M/G/c, todo validado mediante integración temporal de Little, corte MSER-5 y pruebas t a 1000 y 5000 minutos frente a M/G/1 "
-        f"(p ∈ [{p_min_mg1:.3f}, {p_max_mg1:.3f}]).",
+        f"El problema base en Supercentro es que tres cajeros por salida no alcanzan, pues el 55 % de los usuarios (lentos y muy lentos) demora "
+        f"de cuatro a seis minutos digitando la placa. Construimos un simulador discreto en Python con turnos de 1000 min, generador PCG64 mediante "
+        f"SeedSequence y semilla 42. Con la regla secuencial causal de Law y Kelton sin mirar futuro, el estudio cerró en N^{{*}} = {n_off} réplicas "
+        f"(W_{{q}} = {wq_e1:.2f} min, IC 95 % [{wq_e1_l:.2f}, {wq_e1_u:.2f}], ER = {er_wq_e1:.2f} %). En el esquema base pasan {tot_veh_jornada:.2f} "
+        f"vehículos por jornada; el {c_min_w['cajero']} dio el menor promedio total (W = {c_min_w['atencion_w_prom']:.3f} min) y el {c_max_w['cajero']} "
+        f"el mayor (W = {c_max_w['atencion_w_prom']:.3f} min), diferencia por azar muestral (p ≥ {p_sym_min:.2f}). En la comparativa bajo números "
+        f"aleatorios comunes de siete diseños, con tres cajas el {p5_e1_glob:.1f} % global ({p5_e1_peor:.1f} % en el peor servidor) espera más de cinco "
+        f"minutos. La propuesta elegida es E7: cuatro cajeros mixtos más lectura de placa LPR o QR que baja 25 % el tiempo de los perfiles lentos, "
+        f"llevando W_{{q}} a {wq_e7:.2f} min (W = {w_e7:.2f} min), {wq_e7_jsq:.2f} min con señalización JSQ y {wq_e7_mgc:.2f} min en cola única M/G/c, "
+        f"validado con Little continuo, MSER-5 y pruebas t a 1000 y 5000 min frente a M/G/1 (p ∈ [{p_min_mg1:.3f}, {p_max_mg1:.3f}]).",
         space_after=4.0,
     )
     p_res.paragraph_format.line_spacing = 1.12
@@ -659,22 +657,20 @@ def build_document(output_filename: str = None) -> None:
     # =========================================================
     add_h1("1. Introducción")
     add_p(
-        "Los atascos en las salidas de pago de un centro comercial rara vez provienen de caídas de red o lentitud del procesador. El cuello de botella "
-        "nace en la interfaz entre el conductor y la máquina. En el caso de Supercentro, cada salida cuenta con tres cajeros automáticos independientes "
-        "bajo disciplina FCFS (primero en llegar, primero en ser atendido), sin cambio de fila ni deserción. Aunque el software registra el clic al "
-        "instante, digitar la placa y cancelar el tiquete tarda según cuatro perfiles de usuario: apenas 25 % resuelve rápido, mientras 55 % demora cuatro "
-        "o seis minutos."
+        "Cada salida del centro comercial Supercentro tiene tres cajeros automáticos independientes bajo disciplina FCFS, es decir, primero en llegar y "
+        "primero en salir, sin cambio de fila ni deserción. Apenas el 25 % de los conductores paga rápido, mientras que el 55 % tarda cuatro o seis minutos "
+        "digitando la placa y pagando frente a la pantalla."
     )
     add_p(
-        "Resolver este problema exige cuantificar si tres quioscos bastan o conviene invertir en capacidad física y automatización de la interfaz. Desde "
-        "nuestra formación en ingeniería de software, abordamos el sistema distinguiendo con rigor cuándo opera como cola exponencial M/M/1 (por categoría "
-        "aislada) y cuándo pasa a mezcla hiperexponencial M/H4/1 (M/G/1 al combinar los cuatro perfiles en un cajero)."
+        "La pregunta práctica desde la ingeniería de software es si bastan esas tres máquinas o si conviene ampliar la capacidad física y automatizar la "
+        "interfaz de pago. Hay además una aclaración técnica central: si se estudia cada perfil por separado funciona como una cola exponencial M/M/1, "
+        "pero al mezclar los cuatro perfiles en un mismo cajero el servicio pasa a ser una mezcla hiperexponencial M/H4/1, que pertenece al caso M/G/1."
     )
     add_p(
-        "El trabajo da respuesta directa a las cinco consignas de la actividad: (a) determinar el tamaño de muestra para el estado estable sobre la media "
-        "e identificar qué cajero presenta menor y mayor atención total; (b) estimar el volumen promedio por tipo de usuario en toda la salida; (c) definir "
-        "si tres cajeros son suficientes y proponer una estrategia argumentada; (d) verificar, calibrar y validar formalmente el simulador (V&V); y (e) "
-        "implementar la eliminación del período transitorio inicial comparando los valores antes y después."
+        "A lo largo del informe resolvemos los cinco puntos de la actividad, desde el A hasta el E. Primero determinamos el tamaño muestral N* en estado "
+        "estable y revisamos qué cajero tuvo menor y mayor tiempo de atención; luego estimamos los usuarios por tipo en toda la salida y evaluamos si tres "
+        "cajeros bastan para proponer una estrategia; finalmente ejecutamos la verificación, calibración y validación del simulador y eliminamos el período "
+        "transitorio inicial para comparar el antes y el después."
     )
 
     # =========================================================
@@ -684,9 +680,9 @@ def build_document(output_filename: str = None) -> None:
 
     add_h2("2.1 Parametrización del Sistema y Distinción M/M/1 vs. M/H4/1 (M/G/1)")
     add_p(
-        "El enunciado oficial reparte los arribos por cajero en cuatro categorías con tiempos exponenciales de servicio E[S] y tiempos entre llegadas "
-        "E[IA] específicos (Tabla 1). Sumando las tres posiciones base bajo ruteo equiprobable (1/3 por cajero), el intervalo medio por servidor queda en "
-        "E[IA_{c}] = 4.650 min, lo que conserva una demanda agregada por salida de λ_{salida} = 3 / 4.650 = 0.6452 vehículos/min al comparar rediseños."
+        "En la Tabla 1 se muestran los cuatro perfiles de usuario con sus tiempos de servicio E[S] y tiempos entre llegadas E[IA] exponenciales. Bajo un "
+        "ruteo equiprobable de 1/3 entre las tres cajas base, el tiempo medio entre llegadas por cajero queda en E[IA_{c}] = 4.650 minutos, conservando una "
+        "demanda agregada fija por salida de λ_{salida} = 3 / 4.650 = 0.6452 vehículos por minuto en todos los escenarios."
     )
 
     tbl1_data = [
@@ -708,22 +704,20 @@ def build_document(output_filename: str = None) -> None:
     )
 
     add_p(
-        "Conviene precisar dos aspectos matemáticos clave que suelen pasar inadvertidos. Primero, cada categoría analizada por separado forma una cola "
-        "M/M/1 exacta, donde el perfil Normal (ρ = 1.000) diverge sin cota (Tabla 2). Segundo, al mezclar cuatro exponenciales en un mismo servidor, la "
-        "distribución de servicio pasa a ser hiperexponencial de orden cuatro (H4) con E[S] = 3.600 min, segundo momento E[S^{2}] = 32.70 min^{2} y "
-        "coeficiente de variación al cuadrado C^{2}_{s} = 1.5231 > 1. Bajo arribos Poisson puros en la salida (C^{2}_{a} = 1), el sistema mixto es "
-        "exactamente una cola M/H4/1 (caso M/G/1): por eso la ecuación M/M/1 tradicional (12.34 min en E1) subestima la congestión y Pollaczek–Khinchine "
-        "(15.57 min) funciona como identidad analítica exacta (Kleinrock, 1975). Si además las llegadas siguieran mezcla H4 (C^{2}_{a} = 1.2569), pasaríamos "
-        "a régimen GI/G/1 (H4/H4/1), hipótesis que también sometemos a prueba en la Sección 3.7."
+        "Cada perfil aislado forma una cola M/M/1 exacta, donde el perfil Normal tiene ρ = 1.000 y diverge sin cota, como se ve en la Tabla 2. Al mezclar "
+        "los cuatro perfiles en un mismo cajero resulta un servicio hiperexponencial H4 con media E[S] = 3.600 minutos, segundo momento E[S^{2}] = 32.70 min^{2} "
+        "y coeficiente C^{2}_{s} = 1.5231 mayor que uno. Con arribos de Poisson (C^{2}_{a} = 1) el sistema es exactamente M/H4/1 (caso M/G/1), por lo que "
+        "la fórmula M/M/1 tradicional (12.34 minutos en E1) subestima la fila y Pollaczek–Khinchine da el valor exacto de 15.57 minutos (Kleinrock, 1975). "
+        "Si las llegadas también fueran hiperexponenciales H4 con C^{2}_{a} = 1.2569, se pasa a un modelo H4/H4/1 (GI/G/1), que evaluamos en la Sección 3.7."
     )
 
     add_equation_box("ρ = λ_{c} / μ_{c} < 1,     P_{0} = 1 - ρ,     L_{q}(M/M/1) = ρ^{2} / (1 - ρ),     L_{q} = λ_{c} · W_{q},     L = λ_{c} · W", "(1)")
     add_equation_box("W_{q}(M/M/1) = ρ / [μ_{c}(1 - ρ)],     W_{q}(M/G/1) = [λ_{c} · E[S^{2}]] / [2(1 - ρ)],     W = W_{q} + 1/μ_{c}", "(2)")
 
     add_p(
-        "Un detalle similar ocurre con la probabilidad de cola P(W_{q} > 5 min). La fórmula cerrada clásica ρ·e^{-(μ_{c}-λ_{c})t} solo rige bajo servicio "
-        "exponencial puro M/M/1 y subestima la cola pesada hiperexponencial M/H4/1 (por ejemplo, predice 18.9 % en E7 cuando el riesgo real simulado es "
-        "21.2 % global). Por rigor técnico, usamos los cuantiles empíricos directos del simulador M/H4/1 para evaluar todos los umbrales de riesgo."
+        "También hay que explicar que la fórmula exponencial cerrada para P(W_{q} > 5 min) subestima las colas pesadas hiperexponenciales: en el escenario E7 "
+        "predice un 18.9 % teórico exponencial frente al 21.2 % real simulado. Por eso usamos los cuantiles empíricos directos del simulador M/H4/1 para evaluar "
+        "todos los umbrales de riesgo."
     )
 
     tbl2_data = []
@@ -753,10 +747,9 @@ def build_document(output_filename: str = None) -> None:
 
     add_h2("2.2 Arquitectura DES, Regla Causal Law y Kelton y Criterios del Equipo")
     add_p(
-        "Construimos el simulador discreto en Python 3.13 dentro de parking_queue/ (sin SciPy ni dependencias externas inferenciales) sobre jornadas base de "
-        "1000 minutos. Para evitar sesgos entre tamaños muestrales o correlación accidental entre módulos, generamos semillas invariantes al prefijo con "
-        "SeedSequence([42, flujo, réplica]) sobre el generador PCG64. Cada vehículo guarda un factor exponencial unitario Z ~ Exp(1) para aplicar Números "
-        "Aleatorios Comunes (CRN) completos —tanto en arribos como en la secuencia de elección aleatoria— al contrastar los siete escenarios:"
+        "El simulador de eventos discretos fue programado en Python 3.13 dentro del paquete parking_queue/, sin SciPy ni librerías inferenciales externas, "
+        "trabajando con turnos de 1000 minutos. Para garantizar reproducibilidad invariante al prefijo usamos SeedSequence([42, flujo, réplica]) sobre PCG64, "
+        "guardando un factor unitario Z ~ Exp(1) para aplicar números aleatorios comunes (CRN) completos al comparar los siete escenarios:"
     )
     add_bullet("E1 — 3 Mixtos (Base actual): ", "tres cajeros independientes atendiendo todos los perfiles con ruteo aleatorio equiprobable 1/3.")
     add_bullet("E2, E3 y E4 — Ampliación mixta (4, 5 y 6 cajeros): ", "incremento físico de cajeros polivalentes conservando λ_{salida} = 0.6452 veh/min.")
@@ -764,11 +757,11 @@ def build_document(output_filename: str = None) -> None:
     add_bullet("E7 — 4 Mixtos + Mejora UX/LPR: ", "cuatro cajeros mixtos sumando lectura automática de placa LPR o código QR en software (UX: experiencia de usuario), recortando 25 % la interacción de Lentos (4 → 3 min) y Muy lentos (6 → 4.5 min).")
 
     add_p(
-        "Antes de correr el experimento definitivo, el Grupo 25 fijó cinco criterios cuantitativos sobre el régimen estacionario: (1) espera aceptable "
-        "W_{q} ≤ 5 min (peor cajero ≤ 5.5 min) y óptima < 3 min (peor cajero < 3.5 min); (2) permanencia total W ≤ 8 min (óptima < 5 min); (3) ocupación "
-        "del servidor más cargado entre 45 % y 85 % (subutilizado < 45 %, alerta 85–90 % y crítico > 90 %); (4) longitud de cola L_{q} < 3 vehículos por cajero (alerta 3–5, "
-        "crítico > 5); y (5) máximo 20 % esperando más de 5 minutos en el peor cajero (óptimo < 10 %). Evaluamos adicionalmente señalización visible a la "
-        "cola más corta —JSQ (Join-the-Shortest-Queue), implementada sin clarividencia con estructuras deque— y cola única serpentina M/G/c."
+        "El Grupo 25 definió cinco criterios en régimen estacionario: espera media W_{q} ≤ 5 minutos con peor cajero ≤ 5.5 minutos (óptima menor a 3 y 3.5 "
+        "minutos); tiempo total W ≤ 8 minutos (óptimo menor a 5 minutos); uso del peor servidor entre 45 % y 85 %, clasificando como subutilizado por debajo "
+        "de 45 %, alerta entre 85 % y 90 % y crítico por encima de 90 %; longitud de cola L_{q} menor a 3 vehículos por cajero (alerta de 3 a 5 y crítico "
+        "mayor a 5); y máximo 20 % esperando más de cinco minutos en el peor servidor (óptimo menor a 10 %). Además, evaluamos señalización hacia la cola "
+        "más corta JSQ, programada con deque sin clarividencia, y la referencia de cola única M/G/c."
     )
 
     # =========================================================
@@ -779,12 +772,10 @@ def build_document(output_filename: str = None) -> None:
     # 3.1 Estado Estable para definir réplicas N*
     add_h2("3.1 Determinación Causal de Réplicas (N*) por Law y Kelton")
     add_p(
-        f"Un piloto corto de n_{{0}} = 10 corridas resultó insuficiente: arrojó un error relativo ER = (semi-amplitud IC 95 % / media) × 100 % igual a "
-        f"{er10_e1:.2f} % sobre W_{{q}} en E1, requiriendo por la regla clásica n_{{prof}} = ⌈n_{{0}}·(ER_{{0}}/ER_{{meta}})^{{2}}⌉ un total de {n_prof10} "
-        f"corridas para ER ≤ 10 %, {n_prof75} para ER ≤ 7.5 % y {n_prof_w5} para ER(W) ≤ 5 %. Para evitar cualquier sesgo de circularidad al mirar el "
-        f"final de la serie (look-ahead bias), implementamos el criterio secuencial estrictamente causal de Law y Kelton (Law, 2015): avanzamos desde "
-        f"r = 30 evaluando únicamente datos hasta r hasta cumplir simultáneamente la cota ajustada ER(W_{{q}}) ≤ γ/(1+γ) = {er_lk_bound:.2f} % (con γ = 0.06) "
-        f"y variación máxima ≤ 1.5 % en la ventana causal móvil de las últimas veinte réplicas."
+        f"El piloto corto de n_{{0}} = 10 corridas resultó insuficiente porque dio un error relativo ER = {er10_e1:.2f} % sobre W_{{q}} en el escenario base E1; "
+        f"con la fórmula clásica se habrían pedido {n_prof10} corridas para ER ≤ 10 %, {n_prof75} para ER ≤ 7.5 % y {n_prof_w5} para ER(W) ≤ 5 %. Para evitar "
+        f"sesgos por mirar datos futuros usamos la regla secuencial estrictamente causal de Law y Kelton (Law, 2015), avanzando desde r = 30 hasta cumplir al "
+        f"mismo tiempo ER(W_{{q}}) ≤ {er_lk_bound:.2f} % (con γ = 0.06) y una variación móvil máxima de 1.5 % en las últimas 20 réplicas."
     )
 
     milestones = sorted(set([10, 30, 50, 100, 150, 200, n_off, 250]))
@@ -817,9 +808,9 @@ def build_document(output_filename: str = None) -> None:
     )
 
     add_p(
-        f"La Tabla 3 y la Figura 1 confirman que el criterio dual converge de forma limpia exactamente en r = {n_det}, por lo cual adoptamos N^{{*}} = {n_off} "
-        f"réplicas oficiales para toda la experimentación. Con {n_off} jornadas, la espera promedio alcanza W_{{q}} = {row_n_off['wq_media_acumulada_min']:.2f} "
-        f"min (ER = {er_wq_e1:.2f} %) y la permanencia total cumple W = {w_e1:.2f} min con ER = {er_w_e1:.2f} % (holgadamente por debajo del umbral de 5 %)."
+        f"El método alcanza convergencia exacta en r = {n_det}, así que adoptamos N^{{*}} = {n_off} réplicas oficiales en todo el estudio (Tabla 3 y Figura 1). "
+        f"Con esas {n_off} jornadas la espera promedio queda en W_{{q}} = {row_n_off['wq_media_acumulada_min']:.2f} minutos con ER = {er_wq_e1:.2f} %, y el "
+        f"tiempo total en sistema es W = {w_e1:.2f} minutos con ER = {er_w_e1:.2f} %, por debajo del 5 %."
     )
 
     add_apa_fig(
@@ -833,10 +824,8 @@ def build_document(output_filename: str = None) -> None:
     # 3.2 Punto A
     add_h2("3.2 Punto A: Estadísticas por Cajero (Menor y Mayor Tiempo de Atención)")
     add_p(
-        f"Sobre N^{{*}} = {n_off} jornadas de 1000 minutos bajo la línea base E1 (3 Mixtos), medimos el servicio S, la espera en cola W_{{q}} y la atención "
-        f"total W = W_{{q}} + S por servidor (Tabla 4). El promedio simple entre los tres servidores arroja W_{{q}} = {wq_e1_unw:.3f} min, mientras la "
-        f"media del sistema ponderada por clientes totales atendidos es W_{{q}} = {wq_e1:.3f} min (covarianza positiva entre volumen de llegadas por "
-        f"corrida y congestión de la fila)."
+        f"En el escenario base E1, corrido con N^{{*}} = {n_off} réplicas de 1000 minutos, el promedio simple entre los tres cajeros da W_{{q}} = {wq_e1_unw:.3f} "
+        f"minutos, frente a la media del sistema ponderada por clientes de W_{{q}} = {wq_e1:.3f} minutos (Tabla 4)."
     )
 
     tbl4_data = []
@@ -864,12 +853,12 @@ def build_document(output_filename: str = None) -> None:
     )
 
     add_p(
-        f"En la muestra observada, el {c_min_w['cajero']} registró el menor promedio de atención total (W = {c_min_w['atencion_w_prom']:.3f} min; "
-        f"W_{{q}} = {c_min_w['espera_wq_prom']:.3f} min), el {c_mid_w['cajero']} ocupó la posición intermedia (W = {c_mid_w['atencion_w_prom']:.3f} min; "
-        f"W_{{q}} = {c_mid_w['espera_wq_prom']:.3f} min) y el {c_max_w['cajero']} cerró con el mayor registro (W = {c_max_w['atencion_w_prom']:.3f} min; "
-        f"W_{{q}} = {c_max_w['espera_wq_prom']:.3f} min, con picos hasta {c_max_w['atencion_w_max']:.1f} min). Como era esperable en tres servidores "
-        f"idénticos e independientes (i.i.d.), los intervalos de confianza al 95 % se solapan por completo y las pruebas t pareadas confirman ausencia de "
-        f"diferencias sistemáticas (p ≥ {p_sym_min:.2f}, Figura 2); la distancia muestral obedece a variabilidad estocástica propia de colas hiperexponenciales."
+        f"Las cifras de la Tabla 4 muestran que el {c_min_w['cajero']} obtuvo el menor promedio total con W = {c_min_w['atencion_w_prom']:.3f} minutos y W_{{q}} = "
+        f"{c_min_w['espera_wq_prom']:.3f} minutos. El {c_mid_w['cajero']} quedó en un punto intermedio con W = {c_mid_w['atencion_w_prom']:.3f} minutos y W_{{q}} = "
+        f"{c_mid_w['espera_wq_prom']:.3f} minutos, mientras que el {c_max_w['cajero']} marcó el mayor valor con W = {c_max_w['atencion_w_prom']:.3f} minutos y "
+        f"W_{{q}} = {c_max_w['espera_wq_prom']:.3f} minutos, con picos de hasta {c_max_w['atencion_w_max']:.1f} minutos. Como son tres servidores idénticos e "
+        f"independientes (i.i.d.), los intervalos de confianza al 95 % se solapan y las pruebas t pareadas confirman p ≥ {p_sym_min:.2f} (Figura 2), "
+        f"demostrando que esa diferencia es solamente variabilidad muestral."
     )
 
     add_apa_fig(
@@ -883,13 +872,14 @@ def build_document(output_filename: str = None) -> None:
     # 3.3 Punto B
     add_h2("3.3 Punto B: Promedio de Usuarios por Tipo en la Totalidad de Cajeros")
     add_p(
-        f"Agregando las {n_off} réplicas del sistema base sumamos {format_es_int(tot_veh_all)} vehículos atendidos en la salida, equivalente a {tot_veh_jornada:.2f} "
-        f"vehículos por jornada (frente a 645.16 esperados en el flujo Poisson). En los tres cajeros ingresan por jornada {usr_idx.loc['Rápido', 'promedio_total_3_cajeros']:.2f} "
-        f"± {usr_idx.loc['Rápido', 'desv_est_total']:.2f} usuarios Rápido ({usr_idx.loc['Rápido', 'promedio_por_cajero']:.2f}/caj), "
-        f"{usr_idx.loc['Normal', 'promedio_total_3_cajeros']:.2f} ± {usr_idx.loc['Normal', 'desv_est_total']:.2f} Normal ({usr_idx.loc['Normal', 'promedio_por_cajero']:.2f}/caj), "
-        f"{usr_idx.loc['Lento', 'promedio_total_3_cajeros']:.2f} ± {usr_idx.loc['Lento', 'desv_est_total']:.2f} Lento ({usr_idx.loc['Lento', 'promedio_por_cajero']:.2f}/caj) "
-        f"y {usr_idx.loc['Muy lento', 'promedio_total_3_cajeros']:.2f} ± {usr_idx.loc['Muy lento', 'desv_est_total']:.2f} Muy lento "
-        f"({usr_idx.loc['Muy lento', 'promedio_por_cajero']:.2f}/caj), detallados en la Tabla 5."
+        f"El total acumulado en las {n_off} corridas fue de {format_es_int(tot_veh_all)} vehículos, lo que equivale a {tot_veh_jornada:.2f} vehículos por "
+        f"jornada frente a los 645.16 esperados bajo llegadas de Poisson. Los promedios por categoría en las tres cajas de la salida (y por cajero) son: "
+        f"Rápido con {usr_idx.loc['Rápido', 'promedio_total_3_cajeros']:.2f} ± {usr_idx.loc['Rápido', 'desv_est_total']:.2f} "
+        f"({usr_idx.loc['Rápido', 'promedio_por_cajero']:.2f}/caj), Normal con {usr_idx.loc['Normal', 'promedio_total_3_cajeros']:.2f} ± "
+        f"{usr_idx.loc['Normal', 'desv_est_total']:.2f} ({usr_idx.loc['Normal', 'promedio_por_cajero']:.2f}/caj), Lento con "
+        f"{usr_idx.loc['Lento', 'promedio_total_3_cajeros']:.2f} ± {usr_idx.loc['Lento', 'desv_est_total']:.2f} "
+        f"({usr_idx.loc['Lento', 'promedio_por_cajero']:.2f}/caj) y Muy lento con {usr_idx.loc['Muy lento', 'promedio_total_3_cajeros']:.2f} ± "
+        f"{usr_idx.loc['Muy lento', 'desv_est_total']:.2f} ({usr_idx.loc['Muy lento', 'promedio_por_cajero']:.2f}/caj), como se observa en la Tabla 5."
     )
 
     tbl5_data = []
@@ -929,10 +919,10 @@ def build_document(output_filename: str = None) -> None:
     )
 
     add_p(
-        f"La Figura 3 (Panel B) desnuda la asimetría operativa del sistema. Aunque Lentos y Muy lentos representan 55.0 % teórico ({slow_emp_arr:.2f} % "
-        f"empírico) de los arribos, sus medias de digitación hacen que absorban {slow_theo_load:.1f} % teórico ({srv_pct_theo['Lento']:.1f} % y "
-        f"{srv_pct_theo['Muy lento']:.1f} % exactos; {slow_emp_load:.2f} % empírico) de las horas-máquina totales de atención, mientras los Rápidos "
-        f"(25.0 % de visitas) consumen apenas {srv_pct_theo['Rápido']:.1f} % teórico ({srv_pct_emp['Rápido']:.2f} % empírico)."
+        f"La asimetría operativa de la Figura 3 (Panel B) muestra que los usuarios lentos y muy lentos representan el 55.0 % teórico y el {slow_emp_arr:.2f} % "
+        f"empírico en llegadas, pero consumen el {slow_theo_load:.1f} % teórico ({srv_pct_theo['Lento']:.1f} % y {srv_pct_theo['Muy lento']:.1f} %) y el "
+        f"{slow_emp_load:.2f} % empírico de la ocupación de las máquinas. En cambio, los usuarios rápidos suman el 25.0 % de las visitas y solo usan el "
+        f"{srv_pct_theo['Rápido']:.1f} % teórico y el {srv_pct_emp['Rápido']:.2f} % empírico de la capacidad."
     )
 
     add_apa_fig(
@@ -946,11 +936,11 @@ def build_document(output_filename: str = None) -> None:
     # 3.4 Punto C
     add_h2("3.4 Punto C: Estrategia de Mejora y Comparativa de Escenarios")
     add_p(
-        f"¿Son suficientes tres cajeros por salida en Supercentro? Los resultados demuestran que no. En E1 la espera promedia {wq_e1:.2f} min en fila "
-        f"(W = {w_e1:.2f} min; IC 95 % de espera [{wq_e1_l:.2f}, {wq_e1_u:.2f}] min), el servidor más cargado promedia "
-        f"{float(sum_idx.loc['E1_3_Mixtos', 'utilizacion_peor_cajero_prom'])*100:.1f} % de uso (pico intradiario de "
-        f"{float(sum_idx.loc['E1_3_Mixtos', 'utilizacion_max_media'])*100:.1f} %) y {p5_e1_glob:.1f} % global "
-        f"({p5_e1_peor:.1f} % en el peor cajero) espera más de cinco minutos. Contrastamos siete configuraciones en paralelo, JSQ y cola única M/G/c (Tabla 6)."
+        f"Tres cajeros no bastan para la salida de Supercentro. En el escenario base E1 la espera promedia {wq_e1:.2f} minutos (IC 95 % "
+        f"[{wq_e1_l:.2f}, {wq_e1_u:.2f}]) y el tiempo total llega a {w_e1:.2f} minutos; el servidor más cargado promedia "
+        f"{float(sum_idx.loc['E1_3_Mixtos', 'utilizacion_peor_cajero_prom'])*100:.1f} % de uso con picos intradiarios de "
+        f"{float(sum_idx.loc['E1_3_Mixtos', 'utilizacion_max_media'])*100:.1f} %, y el {p5_e1_glob:.1f} % global ({p5_e1_peor:.1f} % en el peor cajero) "
+        f"espera más de cinco minutos, como se observa en la Tabla 6."
     )
 
     tbl6_data = []
@@ -982,21 +972,21 @@ def build_document(output_filename: str = None) -> None:
     )
 
     add_p(
-        f"Instalar un cuarto cajero físico sin cambios en software (E2: 4 Mixtos) recorta la espera a {wq_e2:.2f} min (W = {w_e2:.2f} min), todavía "
-        f"fuera del tope ≤ 5 min. Segregar filas en E5 (4 Esp: 1 Exprés + 3 Estándar) baja el global a {wq_e5:.2f} min pero sobrecarga las tres filas "
-        f"estándar hasta {peor_e5:.2f} min por pérdida de consolidación (pooling), mientras E6 (5 Esp) deja el segmento lento en {peor_e6:.2f} min frente "
-        f"a {wq_e3:.2f} min de cinco cajeros mixtos (E3)."
+        f"En la comparativa de descartes, pasar a cuatro cajeros mixtos sin cambio de software (E2) deja la espera en {wq_e2:.2f} minutos y el total en "
+        f"{w_e2:.2f} minutos, todavía por encima de la meta de cinco minutos. Las opciones de segregación fija E5 ({wq_e5:.2f} minutos global, pero "
+        f"{peor_e5:.2f} minutos en las filas estándar) y E6 ({peor_e6:.2f} minutos en el peor servidor frente a {wq_e3:.2f} minutos de cinco mixtos E3) "
+        f"fallan por pérdida de consolidación de fila (pooling)."
     )
     add_p(
-        f"Para cumplir los cinco umbrales de espera sin tocar el software ni el enrutamiento aleatorio se requieren 6 cajeros mixtos (E4: W_{{q}} = {wq_e4:.2f} min, "
-        f"W = {w_e4:.2f} min, P(W_{{q}} > 5 m) = {p5_e4_peor:.1f} % peor cajero); no obstante, ese despliegue resulta REDUNDANTE al operar con "
-        f"{rho_e4_med:.1f} % de uso promedio ({ocio_e4:.1f} % de tiempo ocioso y {float(sum_idx.loc['E4_6_Mixtos', 'utilizacion_peor_cajero_prom'])*100:.1f} % en el "
-        f"servidor más cargado, por debajo de 45 %; pico diario intradiario {rho_e4_max:.1f} %). En cambio, nuestra estrategia recomendada E7 "
-        f"(4 Mixtos + UX/LPR) combina un solo cajero nuevo con captura automática de placa LPR/QR: bajo llegada aleatoria alcanza W_{{q}} = {wq_e7:.2f} min "
-        f"y logra el menor tiempo total en sistema de todo el estudio (W = {w_e7:.2f} min vs. {w_e4:.2f} min en E4, con {rho_e7:.1f} % de uso). Aunque sin "
-        f"señalización de filas su cola excede levemente el 20 % ({p5_e7_peor:.1f} % peor servidor), basta añadir señalización JSQ para llevarla a "
-        f"W_{{q}} = {wq_e7_jsq:.2f} min ({p5_e7_jsq:.1f} % sobre 5 min) o a W_{{q}} = {wq_e7_mgc:.2f} min ({p5_e7_mgc:.1f} %) mediante fila única M/G/c "
-        f"(Figura 4). Como respaldo estrictamente físico, 5 Mixtos (E3) con JSQ alcanza W_{{q}} = {wq_e3_jsq:.2f} min ({wq_e3_mgc:.2f} min en M/G/c)."
+        f"Instalar seis cajeros mixtos (E4) logra una espera de {wq_e4:.2f} minutos, tiempo total de {w_e4:.2f} minutos y {p5_e4_peor:.1f} % por encima de "
+        f"cinco minutos en el peor cajero, pero resulta REDUNDANTE porque trabaja con solo {rho_e4_med:.1f} % de uso promedio, {ocio_e4:.1f} % de tiempo "
+        f"ocioso y {float(sum_idx.loc['E4_6_Mixtos', 'utilizacion_peor_cajero_prom'])*100:.1f} % en el servidor más cargado (por debajo de 45 %, con pico "
+        f"diario de {rho_e4_max:.1f} %). Por eso la estrategia elegida es E7 (cuatro mixtos más mejora UX/LPR), que suma un solo cajero y lectura automática "
+        f"de placa LPR o QR para bajar un 25 % el tiempo de los perfiles lentos y muy lentos: alcanza W_{{q}} = {wq_e7:.2f} minutos, el menor tiempo total del "
+        f"estudio (W = {w_e7:.2f} minutos frente a {w_e4:.2f} en E4) y {rho_e7:.1f} % de uso. Aunque sin señalizar pasa un poco del 20 % ({p5_e7_peor:.1f} % "
+        f"en el peor servidor), con señalización JSQ cae a W_{{q}} = {wq_e7_jsq:.2f} minutos ({p5_e7_jsq:.1f} % sobre cinco minutos) y en fila única M/G/c "
+        f"baja a {wq_e7_mgc:.2f} minutos ({p5_e7_mgc:.1f} %, Figura 4). Como alternativa solo física queda E3 (cinco mixtos), que con JSQ logra "
+        f"{wq_e3_jsq:.2f} minutos y {wq_e3_mgc:.2f} minutos en M/G/c."
     )
 
     add_apa_fig(
@@ -1010,20 +1000,17 @@ def build_document(output_filename: str = None) -> None:
     # 3.5 Punto D
     add_h2("3.5 Punto D: Verificación, Calibración y Validación (V&V)")
     add_p(
-        "Un simulador estocástico requiere auditoría secuencial en tres capas antes de respaldar decisiones operativas (Banks et al., 2010). En "
-        "verificación, comprobamos la ausencia de defectos de programación: ejecutamos 25 pruebas unitarias automatizadas sobre los axiomas e "
-        "invariantes del motor, verificación cruzada automática del cuaderno Colab frente a las salidas CSV y auditoría continua de la Ley de Little "
-        f"(L_{{q}} = ∫Q(t)dt / H_{{eff}} = λ_{{eff}} · W_{{q}}) sobre las {n_off} × 7 corridas tanto paralelas como JSQ, con error máximo de "
-        f"{little_max:.2e} (< 10^{{-10}}). En calibración, evaluamos las frecuencias generadas frente a los pesos objetivos (25 / 20 / 27.5 / 27.5 %): el error "
-        f"absoluto medio (MAE) fue apenas {mae_pp:.2f} puntos porcentuales (pp), la prueba de bondad de ajuste resultó χ^{{2}} = {chi2_st:.3f} "
-        f"(gl = 3 grados de libertad, p = {chi2_pv:.3f} > 0.05) y el error relativo máximo en los promedios empíricos de servicio por perfil y escenario "
-        f"fue {srv_err:.2f} % (idéntico entre políticas bajo CRN por compartir los mismos factores unitarios Z ~ Exp(1))."
+        f"El simulador se revisó en tres capas de verificación, calibración y validación siguiendo el enfoque de Banks et al. (2010). En la verificación "
+        f"ejecutamos 25 pruebas unitarias que pasaron sin fallos, comprobamos el cruce automático del cuaderno Colab contra los archivos CSV y realizamos "
+        f"una auditoría continua de la ley de Little (L_{{q}} = ∫Q(t)dt / H_{{eff}} = λ_{{eff}} · W_{{q}}) en las {n_off} × 7 corridas tanto en paralelo "
+        f"como en JSQ, obteniendo un residuo máximo de {little_max:.2e}, menor a 10^{{-10}}. En la calibración frente a las proporciones objetivo "
+        f"(25 / 20 / 27.5 / 27.5 %) el MAE fue de {mae_pp:.2f} puntos porcentuales, la prueba de bondad de ajuste dio χ^{{2}} = {chi2_st:.3f} (gl = 3, "
+        f"p = {chi2_pv:.3f} > 0.05) y el error relativo máximo de servicio fue de {srv_err:.2f} %, idéntico entre políticas bajo CRN."
     )
     add_p(
-        f"En validación estadística, contrastamos las medias estacionarias post-warmup mediante pruebas t bilaterales (α = 0.05) frente a las identidades "
-        f"exactas Pollaczek–Khinchine M/G/1. Como sintetizan la Tabla 7 y la Figura 5, todos los escenarios superan el contraste tanto tras el corte "
-        f"MSER-5 sobre jornadas de 1000 minutos (p ∈ [{p_min_mg1:.3f}, {p_max_mg1:.3f}]) como en una validación estacionaria dedicada sobre horizontes largos "
-        f"de 5000 minutos con 80 réplicas descartando los primeros 1000 min de arranque (p ∈ [{p_min_5k:.3f}, {p_max_5k:.3f}] > 0.05)."
+        f"En la validación estadística bilateral con α = 0.05 frente a las fórmulas exactas M/G/1 (Tabla 7 y Figura 5), los siete escenarios aprueban tanto "
+        f"en las jornadas de 1000 minutos tras el corte MSER-5 (p ∈ [{p_min_mg1:.3f}, {p_max_mg1:.3f}]) como en corridas dedicadas de 5000 minutos con 80 "
+        f"réplicas quitando los primeros 1000 minutos iniciales (p ∈ [{p_min_5k:.3f}, {p_max_5k:.3f}])."
     )
 
     tbl7_data = []
@@ -1071,11 +1058,9 @@ def build_document(output_filename: str = None) -> None:
     # 3.6 Punto E
     add_h2("3.6 Punto E: Eliminación del Estado Transitorio por MSER-5 (Antes vs. Después)")
     add_p(
-        f"Todas las jornadas iniciaron vacías (L(0) = 0). Quienes llegan primero encuentran la salida despejada y sesgan hacia abajo la media del turno "
-        f"(Law, 2015). Para detectar objetivamente dónde termina ese período de calentamiento (warm-up) sin fijar topes arbitrarios, agrupamos el promedio "
-        f"transversal por orden de llegada k = 1…550 en lotes de tamaño b = 5 y aplicamos la regla clásica MSER-5 (White, 1997), buscando el lote óptimo d^{{*}} "
-        f"que minimiza el error cuadrático medio de la cola restante (k^{{*}} = 5·d^{{*}} + 1). Al calcular la media estacionaria promediamos por réplica todos "
-        f"los clientes restantes hasta concluir el horizonte de 1000 minutos, sin truncar llegadas posteriores a k = 550:"
+        "Todas las corridas arrancan vacías con L(0) = 0, lo que genera un sesgo inicial a la baja en la espera promedio (Law, 2015). Para detectar dónde "
+        "termina ese transitorio aplicamos el método MSER-5 (White, 1997) en lotes de tamaño b = 5 sobre el orden de llegada k = 1…550 para hallar el punto "
+        "de corte d^{*} (k^{*} = 5·d^{*} + 1), promediando después todos los vehículos restantes hasta el final del turno de 1000 minutos:"
     )
 
     add_code_listing(
@@ -1129,14 +1114,15 @@ def build_document(output_filename: str = None) -> None:
     c1_sub_min = float(df_warm_c1["sesgo_subestimacion_pct"].min())
     c1_sub_max = float(df_warm_c1["sesgo_subestimacion_pct"].max())
     add_p(
-        f"En el esquema actual (3 Mixtos), MSER-5 identifica d^{{*}} = {d_cut_e1} (k^{{*}} = {k_cut_e1} vehículos, equivalente a ~{t_cut_e1:.1f} min de "
-        f"arranque). Al descartar esos primeros {k_cut_e1 - 1} arribos, la espera promedio aumenta +{incr_e1:.2f} % desde {wq_e1:.2f} hasta "
-        f"{wq_ss_e1:.2f} min —convergiendo hacia la solución analítica M/G/1 de {wq_mg1_e1:.2f} min (p = {p_mg1_e1:.3f})—, lo que revela una subestimación "
-        f"por arranque vacío de {sesgo_e1:.2f} %. En los servidores individuales el ajuste varía entre {c1_sub_min:.2f} % y {c1_sub_max:.2f} % de "
-        f"subestimación: Cajero 1 ({c1w.loc['Cajero 1', 'wq_con_transitorio_min']:.2f} → {c1w.loc['Cajero 1', 'wq_estado_estable_min']:.2f} min), "
-        f"Cajero 2 ({c1w.loc['Cajero 2', 'wq_con_transitorio_min']:.2f} → {c1w.loc['Cajero 2', 'wq_estado_estable_min']:.2f} min) y Cajero 3 "
-        f"({c1w.loc['Cajero 3', 'wq_con_transitorio_min']:.2f} → {c1w.loc['Cajero 3', 'wq_estado_estable_min']:.2f} min). En E2..E7 la estabilidad "
-        f"llega antes (k^{{*}} entre {k_other_min} y {k_other_max} vehículos; subestimación entre {sesgo_other_min:.2f} % y {sesgo_other_max:.2f} %, Figura 6)."
+        f"En el escenario base E1 de tres mixtos, el corte queda en d^{{*}} = {d_cut_e1} (k^{{*}} = {k_cut_e1} vehículos, cerca de {t_cut_e1:.1f} minutos). Al "
+        f"descartar los primeros {k_cut_e1 - 1} arribos la espera W_{{q}} sube un +{incr_e1:.2f} %, pasando de {wq_e1:.2f} a {wq_ss_e1:.2f} minutos y "
+        f"convergiendo hacia el valor analítico M/G/1 de {wq_mg1_e1:.2f} minutos (p = {p_mg1_e1:.3f}), lo que deja ver una subestimación inicial del "
+        f"{sesgo_e1:.2f} %. En los cajeros individuales de E1 el ajuste va de {c1_sub_min:.2f} % a {c1_sub_max:.2f} %: el Cajero 1 pasa de "
+        f"{c1w.loc['Cajero 1', 'wq_con_transitorio_min']:.2f} a {c1w.loc['Cajero 1', 'wq_estado_estable_min']:.2f} minutos, el Cajero 2 de "
+        f"{c1w.loc['Cajero 2', 'wq_con_transitorio_min']:.2f} a {c1w.loc['Cajero 2', 'wq_estado_estable_min']:.2f} minutos y el Cajero 3 de "
+        f"{c1w.loc['Cajero 3', 'wq_con_transitorio_min']:.2f} a {c1w.loc['Cajero 3', 'wq_estado_estable_min']:.2f} minutos. En los demás escenarios "
+        f"(E2 a E7) el corte ocurre antes, con k^{{*}} entre {k_other_min} y {k_other_max} vehículos y subestimación entre {sesgo_other_min:.2f} % y "
+        f"{sesgo_other_max:.2f} %, como se ve en la Tabla 8 y la Figura 6."
     )
 
     add_apa_fig(
@@ -1151,12 +1137,12 @@ def build_document(output_filename: str = None) -> None:
     add_h2("3.7 Validación Aislada M/M/1 (6000 min), Sensibilidad Nivel B, IC Pareados y CAPEX/OPEX")
     iso_r = df_iso_val.set_index("tipo_usuario")
     add_p(
-        f"Sobre horizontes largos de 6000 minutos con 30 % de calentamiento descartado (100 réplicas), los tres perfiles estables verifican las soluciones "
-        f"analíticas exactas 1/(μ - λ): Rápido (p = {float(iso_r.loc['Rápido', 'p_valor_w']):.3f}), Lento (p = {float(iso_r.loc['Lento', 'p_valor_w']):.3f}) "
-        f"y Muy lento (p = {float(iso_r.loc['Muy lento', 'p_valor_w']):.3f} > 0.05). Para el perfil Normal (ρ = 1.00), medimos su crecimiento empírico al "
-        f"sextuplicar el horizonte: W pasa de {float(iso_r.loc['Normal', 'w_horizonte_1000m_min']):.1f} min (1000 m) a "
-        f"{float(iso_r.loc['Normal', 'w_simulado_est_min']):.1f} min (6000 m), comprobando un factor de divergencia de "
-        f"{float(iso_r.loc['Normal', 'ratio_crecimiento_6000_vs_1000']):.2f}× sin estabilización (Figura 7)."
+        f"Al probar los perfiles M/M/1 aislados sobre 6000 minutos con 30 % de calentamiento descartado y 100 réplicas, los grupos Rápido "
+        f"(p = {float(iso_r.loc['Rápido', 'p_valor_w']):.3f}), Lento (p = {float(iso_r.loc['Lento', 'p_valor_w']):.3f}) y Muy lento "
+        f"(p = {float(iso_r.loc['Muy lento', 'p_valor_w']):.3f}) confirman el valor teórico 1/(μ - λ). En cambio, el perfil Normal (ρ = 1.00) crece desde "
+        f"{float(iso_r.loc['Normal', 'w_horizonte_1000m_min']):.1f} minutos en 1000 minutos hasta {float(iso_r.loc['Normal', 'w_simulado_est_min']):.1f} "
+        f"minutos en 6000 minutos, con un factor de divergencia de {float(iso_r.loc['Normal', 'ratio_crecimiento_6000_vs_1000']):.2f}× sin estabilizarse, "
+        f"como se ve en la Figura 7."
     )
 
     add_apa_fig(
@@ -1165,6 +1151,12 @@ def build_document(output_filename: str = None) -> None:
         "Validación M/M/1 puro por perfil aislado sobre 6000 min (Panel A) y balance por cajero en escenarios clave (Panel B)",
         f"Panel A muestra crecimiento empírico {float(iso_r.loc['Normal', 'ratio_crecimiento_6000_vs_1000']):.2f}× en Normal (ρ = 1); Panel B exhibe el desbalance de cajeros Estándar en E5.",
         width_in=6.35,
+    )
+
+    add_p(
+        "Para cerrar el análisis técnico, la Tabla 9 resume los contrastes pareados bajo CRN, el barrido de mejora UX de -15 % a -30 %, el impacto de "
+        "llegadas hiperexponenciales H4/H4/1 y el escenario de demanda pico de +20 %, mientras que la Tabla 10 presenta la comparativa referencial de "
+        "costo-beneficio CAPEX/OPEX."
     )
 
     ux_15_rnd = df_sens[(df_sens["bloque"] == "Sensibilidad UX/LPR") & (df_sens["escenario"] == "UX_15pct") & (df_sens["routing_mode"] == "random_mm1")].iloc[0]
@@ -1225,45 +1217,48 @@ def build_document(output_filename: str = None) -> None:
     add_h1("4. Conclusiones y Recomendaciones")
     add_numbered_item(
         "1.",
-        "Insuficiencia crítica de los 3 cajeros actuales: ",
-        f"Tres cajeros por salida incumplen por margen amplio las metas del servicio. Generan una espera media de {wq_e1:.2f} min ({wq_ss_e1:.2f} min en "
-        f"estado estable), {w_e1:.2f} min totales y un {p5_e1_glob:.1f} % global ({p5_e1_peor:.1f} % en el peor cajero) esperando más de cinco minutos.",
+        "Insuficiencia de los tres cajeros actuales: ",
+        f"Tres cajeros por salida no alcanzan para la operación de Supercentro. La espera promedio llega a {wq_e1:.2f} minutos ({wq_ss_e1:.2f} minutos en "
+        f"estado estable), el tiempo total sube a {w_e1:.2f} minutos y el {p5_e1_glob:.1f} % global ({p5_e1_peor:.1f} % en el peor servidor) espera más de "
+        f"cinco minutos.",
     )
     add_numbered_item(
         "2.",
-        "Estabilidad causal N* y simetría entre cajeros (Punto A): ",
-        f"Con la regla secuencial sin look-ahead de Law y Kelton fijamos N^{{*}} = {n_off} réplicas (ER(W_{{q}}) = {er_wq_e1:.2f} %, ER(W) = {er_w_e1:.2f} %). "
-        f"Aunque en la muestra el {c_min_w['cajero']} promedió W = {c_min_w['atencion_w_prom']:.3f} min y el {c_max_w['cajero']} alcanzó {c_max_w['atencion_w_prom']:.3f} min "
-        f"(con S ≈ {s_e1:.3f} min global), las pruebas pareadas demuestran simetría estadística i.i.d. (p ≥ {p_sym_min:.2f}).",
+        "Estabilidad muestral N* y simetría entre cajeros (Punto A): ",
+        f"Con la regla secuencial causal de Law y Kelton trabajamos con N^{{*}} = {n_off} réplicas, logrando ER(W_{{q}}) = {er_wq_e1:.2f} % y ER(W) = "
+        f"{er_w_e1:.2f} %. Aunque en la muestra el {c_min_w['cajero']} marcó {c_min_w['atencion_w_prom']:.3f} minutos y el {c_max_w['cajero']} llegó a "
+        f"{c_max_w['atencion_w_prom']:.3f} minutos (con servicio global cercano a {s_e1:.3f} minutos), las pruebas pareadas dan p ≥ {p_sym_min:.2f} y "
+        f"confirman que los tres cajeros trabajan de forma simétrica.",
     )
     add_numbered_item(
         "3.",
-        "Desbalance causado por perfiles lentos (Punto B): ",
-        f"Ingresan {tot_veh_jornada:.2f} vehículos por jornada ({usr_idx.loc['Rápido', 'promedio_total_3_cajeros']:.2f} Rápido, "
+        "Desbalance de carga por perfiles lentos (Punto B): ",
+        f"Por la salida pasan en promedio {tot_veh_jornada:.2f} vehículos por jornada ({usr_idx.loc['Rápido', 'promedio_total_3_cajeros']:.2f} Rápido, "
         f"{usr_idx.loc['Normal', 'promedio_total_3_cajeros']:.2f} Normal, {usr_idx.loc['Lento', 'promedio_total_3_cajeros']:.2f} Lento y "
-        f"{usr_idx.loc['Muy lento', 'promedio_total_3_cajeros']:.2f} Muy lento). Aunque Lentos y Muy lentos suman {slow_emp_arr:.2f} % de visitas, "
-        f"consumen {slow_theo_load:.1f} % de la carga teórica de servicio ({slow_emp_load:.2f} % empírico).",
+        f"{usr_idx.loc['Muy lento', 'promedio_total_3_cajeros']:.2f} Muy lento). Aunque los usuarios lentos y muy lentos suman el {slow_emp_arr:.2f} % de "
+        f"las visitas, consumen el {slow_theo_load:.1f} % de la carga teórica de servicio y el {slow_emp_load:.2f} % de la carga empírica.",
     )
     add_numbered_item(
         "4.",
-        "Estrategia integral recomendada (Punto C): ",
-        f"Descartar la segregación rígida (E5 y E6) por pérdida de pooling y descartar E4 como REDUNDANTE por subutilización ({ocio_e4:.1f} % de ocio medio). "
-        f"Recomendamos ampliar a 4 cajeros mixtos con reconocimiento automático de placa LPR/QR (E7: W_{{q}} = {wq_e7:.2f} min, W = {w_e7:.2f} min) y "
-        f"señalización observable JSQ (W_{{q}} = {wq_e7_jsq:.2f} min, P(>5m) = {p5_e7_jsq:.1f} %) o cola única M/G/c ({wq_e7_mgc:.2f} min), "
-        f"resistiendo incluso +20 % de demanda pico con menor CAPEX/OPEX.",
+        "Estrategia recomendada (Punto C): ",
+        f"Se descartan las filas segregadas (E5 y E6) por pérdida de consolidación y también el escenario E4 de seis mixtos por resultar REDUNDANTE con "
+        f"{ocio_e4:.1f} % de tiempo ocioso. La mejor opción es E7 (cuatro cajeros mixtos con lectura automática LPR/QR), que baja la espera a {wq_e7:.2f} "
+        f"minutos (W = {w_e7:.2f} minutos), cae a {wq_e7_jsq:.2f} minutos con señalización JSQ ({p5_e7_jsq:.1f} % sobre cinco minutos) o a {wq_e7_mgc:.2f} "
+        f"minutos con cola única M/G/c, y aguanta un aumento de +20 % en demanda pico con menor CAPEX y OPEX.",
     )
     add_numbered_item(
         "5.",
-        "Validación integral y ajuste MSER-5 del transitorio (Puntos D y E): ",
-        f"El simulador satisface 25 pruebas unitarias, auditoría continua de Little por ∫Q(t)dt (residuo < 10^{{-10}} en todas las réplicas), calibración "
-        f"χ^{{2}} (p = {chi2_pv:.3f}) y pruebas t frente a M/G/1 a 1000 min (p ∈ [{p_min_mg1:.3f}, {p_max_mg1:.3f}]) y 5000 min (p ∈ [{p_min_5k:.3f}, {p_max_5k:.3f}]). "
-        f"Aplicar MSER-5 en E1 (k^{{*}} = {k_cut_e1}) evita la subestimación inicial del {sesgo_e1:.2f} % (incremento real de +{incr_e1:.2f} %).",
+        "Verificación, validación y ajuste MSER-5 (Puntos D y E): ",
+        f"El modelo pasó 25 pruebas unitarias, la auditoría continua de Little con residuo menor a 10^{{-10}}, la calibración χ^{{2}} con p = {chi2_pv:.3f} "
+        f"y las pruebas t frente a M/G/1 tanto a 1000 minutos (p ∈ [{p_min_mg1:.3f}, {p_max_mg1:.3f}]) como a 5000 minutos "
+        f"(p ∈ [{p_min_5k:.3f}, {p_max_5k:.3f}]). Aplicar el corte MSER-5 en E1 tras k^{{*}} = {k_cut_e1} vehículos corrige la subestimación inicial del "
+        f"{sesgo_e1:.2f} % (incremento real de +{incr_e1:.2f} %).",
     )
     add_numbered_item(
         "6.",
-        "Limitaciones y líneas futuras: ",
-        "El modelo base supone demanda constante en 1000 min y cero abandono en fila; aunque probamos sensibilidad +20 % y arribos H4/H4/1, futuras "
-        "extensiones pueden modelar llegadas no homogéneas por hora pico (Poisson NHPP) y pagos desde aplicación móvil fuera del quiosco.",
+        "Limitaciones y mejoras futuras: ",
+        "El simulador asume demanda estable durante 1000 minutos y cero abandonos en fila. Como trabajo futuro conviene modelar franjas de hora pico con "
+        "llegadas no homogéneas (NHPP) e incluir pagos desde aplicación móvil fuera del quiosco.",
     )
 
     # =========================================================
