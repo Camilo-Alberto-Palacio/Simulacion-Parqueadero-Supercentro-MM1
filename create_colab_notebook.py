@@ -627,7 +627,7 @@ plt.tight_layout(); plt.show()"""
 
 * **Usa:** partimos de las tablas oficiales de parámetros de Supercentro y de la base arquitectónica DES verificada en modelos de colas de actividades previas del curso.
 * **Modifica:** adaptamos el horizonte a 1000 minutos (y 5000 min estacionarios), sustituimos semillas lineales por `SeedSequence([base, flujo, r])` bajo CRN completos e implementamos sin dependencias externas los cuantiles *t* de Student, $\\chi^2$ y el integrador continuo $\\int Q(t)\\,dt$ para Little.
-* **Crea:** desarrollamos el detector causal de Law y Kelton sin *look-ahead*, el corte MSER-5 con Welch centrado, el comparativo paralelo/JSQ/cola única $M/G/c$, la sensibilidad $H_4/H_4/1$–UX–Pico $+20\\%$, los contrastes pareados CRN, la suite de 25 pruebas unitarias y la verificación cruzada contra los CSV oficiales. Las herramientas de IA y la auditoría Elephant–Goldfish operaron bajo supervisión técnica integral del Grupo 25."""
+* **Crea:** desarrollamos el detector causal de Law y Kelton sin *look-ahead*, el corte MSER-5 con Welch centrado, el comparativo paralelo/JSQ/cola única $M/G/c$, la sensibilidad $H_4/H_4/1$–UX–Pico $+20\\%$, los contrastes pareados CRN, la suite de 25 pruebas unitarias y la verificación cruzada contra los CSV oficiales. Las herramientas de IA apoyaron la codificación auxiliar, estructuración gráfica y verificación automatizada de consistencia, siempre bajo diseño, validación matemática y revisión por pares del Grupo 25."""
     ),
 ]
 

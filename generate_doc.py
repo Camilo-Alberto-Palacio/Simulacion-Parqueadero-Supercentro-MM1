@@ -229,20 +229,19 @@ def add_code_listing(doc, code_lines: list, caption_note: str) -> None:
     set_cell_margins(cell, top=80, bottom=80, left=105, right=105)
     set_cell_borders(cell, top="single", bottom="single", left="single", right="single", color="CBD5E1", sz="6")
 
-    p = cell.paragraphs[0]
-    p.paragraph_format.space_before = Pt(2)
-    p.paragraph_format.space_after = Pt(2)
-    p.paragraph_format.line_spacing = 1.05
-    p.paragraph_format.keep_with_next = True
+    for idx_line, (line_num, line_txt) in enumerate(enumerate(code_lines, start=1)):
+        p = cell.paragraphs[0] if idx_line == 0 else cell.add_paragraph()
+        p.paragraph_format.space_before = Pt(2 if idx_line == 0 else 0.5)
+        p.paragraph_format.space_after = Pt(2 if idx_line == len(code_lines) - 1 else 0.5)
+        p.paragraph_format.line_spacing = 1.02
+        p.paragraph_format.keep_with_next = True
 
-    for line_num, line_txt in enumerate(code_lines, start=1):
-        r_num = p.add_run(f"{line_num:2d} ")
+        r_num = p.add_run(f"{line_num:2d}  ")
         r_num.font.name = "Consolas"
         r_num.font.size = Pt(8.0)
         r_num.font.color.rgb = COLOR_MUTED
 
-        suffix = "\n" if line_num < len(code_lines) else ""
-        r_code = p.add_run(f"{line_txt}{suffix}")
+        r_code = p.add_run(line_txt)
         r_code.font.name = "Consolas"
         r_code.font.size = Pt(8.0)
         r_code.font.color.rgb = COLOR_CODE
@@ -629,11 +628,11 @@ def build_document(output_filename: str = None) -> None:
         f"SeedSequence y semilla 42. Con la regla secuencial causal de Law y Kelton sin mirar futuro, el estudio cerró en N^{{*}} = {n_off} réplicas "
         f"(W_{{q}} = {wq_e1:.2f} min, IC 95 % [{wq_e1_l:.2f}, {wq_e1_u:.2f}], ER = {er_wq_e1:.2f} %). En el esquema base pasan {tot_veh_jornada:.2f} "
         f"vehículos por jornada; el {c_min_w['cajero']} dio el menor promedio total (W = {c_min_w['atencion_w_prom']:.3f} min) y el {c_max_w['cajero']} "
-        f"el mayor (W = {c_max_w['atencion_w_prom']:.3f} min), diferencia por azar muestral (p ≥ {p_sym_min:.2f}). En la comparativa bajo números "
+        f"el mayor (W = {c_max_w['atencion_w_prom']:.3f} min), diferencia por azar muestral (p ≥ {p_sym_min:.3f}). En la comparativa bajo números "
         f"aleatorios comunes de siete diseños, con tres cajas el {p5_e1_glob:.1f} % global ({p5_e1_peor:.1f} % en el peor servidor) espera más de cinco "
         f"minutos. La propuesta elegida es E7: cuatro cajeros mixtos más lectura de placa LPR o QR que baja 25 % el tiempo de los perfiles lentos, "
         f"llevando W_{{q}} a {wq_e7:.2f} min (W = {w_e7:.2f} min), {wq_e7_jsq:.2f} min con señalización JSQ y {wq_e7_mgc:.2f} min en cola única M/G/c, "
-        f"validado con Little continuo, MSER-5 y pruebas t a 1000 y 5000 min frente a M/G/1 (p ∈ [{p_min_mg1:.3f}, {p_max_mg1:.3f}]).",
+        f"validado con Little continuo, MSER-5 y pruebas t frente a M/G/1 a 1000 min (p ∈ [{p_min_mg1:.3f}, {p_max_mg1:.3f}]) y 5000 min (p ∈ [{p_min_5k:.3f}, {p_max_5k:.3f}]).",
         space_after=4.0,
     )
     p_res.paragraph_format.line_spacing = 1.12
@@ -680,7 +679,7 @@ def build_document(output_filename: str = None) -> None:
 
     add_h2("2.1 Parametrización del Sistema y Distinción M/M/1 vs. M/H4/1 (M/G/1)")
     add_p(
-        "En la Tabla 1 se muestran los cuatro perfiles de usuario con sus tiempos de servicio E[S] y tiempos entre llegadas E[IA] exponenciales. Bajo un "
+        "En la Tabla 1 se muestran los cuatro perfiles de usuario con sus tiempos de servicio E[S] y tiempos entre llegadas E[IA] exponenciales (Ross, 2014). Bajo un "
         "ruteo equiprobable de 1/3 entre las tres cajas base, el tiempo medio entre llegadas por cajero queda en E[IA_{c}] = 4.650 minutos, conservando una "
         "demanda agregada fija por salida de λ_{salida} = 3 / 4.650 = 0.6452 vehículos por minuto en todos los escenarios."
     )
@@ -704,7 +703,7 @@ def build_document(output_filename: str = None) -> None:
     )
 
     add_p(
-        "Cada perfil aislado forma una cola M/M/1 exacta, donde el perfil Normal tiene ρ = 1.000 y diverge sin cota, como se ve en la Tabla 2. Al mezclar "
+        "Cada perfil aislado forma una cola M/M/1 exacta (Gross et al., 2008), donde el perfil Normal tiene ρ = 1.000 y diverge sin cota, como se ve en la Tabla 2. Al mezclar "
         "los cuatro perfiles en un mismo cajero resulta un servicio hiperexponencial H4 con media E[S] = 3.600 minutos, segundo momento E[S^{2}] = 32.70 min^{2} "
         "y coeficiente C^{2}_{s} = 1.5231 mayor que uno. Con arribos de Poisson (C^{2}_{a} = 1) el sistema es exactamente M/H4/1 (caso M/G/1), por lo que "
         "la fórmula M/M/1 tradicional (12.34 minutos en E1) subestima la fila y Pollaczek–Khinchine da el valor exacto de 15.57 minutos (Kleinrock, 1975). "
@@ -857,7 +856,7 @@ def build_document(output_filename: str = None) -> None:
         f"{c_min_w['espera_wq_prom']:.3f} minutos. El {c_mid_w['cajero']} quedó en un punto intermedio con W = {c_mid_w['atencion_w_prom']:.3f} minutos y W_{{q}} = "
         f"{c_mid_w['espera_wq_prom']:.3f} minutos, mientras que el {c_max_w['cajero']} marcó el mayor valor con W = {c_max_w['atencion_w_prom']:.3f} minutos y "
         f"W_{{q}} = {c_max_w['espera_wq_prom']:.3f} minutos, con picos de hasta {c_max_w['atencion_w_max']:.1f} minutos. Como son tres servidores idénticos e "
-        f"independientes (i.i.d.), los intervalos de confianza al 95 % se solapan y las pruebas t pareadas confirman p ≥ {p_sym_min:.2f} (Figura 2), "
+        f"independientes (i.i.d.), los intervalos de confianza al 95 % se solapan y las pruebas t pareadas confirman p ≥ {p_sym_min:.3f} (Figura 2), "
         f"demostrando que esa diferencia es solamente variabilidad muestral."
     )
 
@@ -1002,15 +1001,15 @@ def build_document(output_filename: str = None) -> None:
     add_p(
         f"El simulador se revisó en tres capas de verificación, calibración y validación siguiendo el enfoque de Banks et al. (2010). En la verificación "
         f"ejecutamos 25 pruebas unitarias que pasaron sin fallos, comprobamos el cruce automático del cuaderno Colab contra los archivos CSV y realizamos "
-        f"una auditoría continua de la ley de Little (L_{{q}} = ∫Q(t)dt / H_{{eff}} = λ_{{eff}} · W_{{q}}) en las {n_off} × 7 corridas tanto en paralelo "
+        f"una auditoría continua de la ley de Little (Little, 1961; L_{{q}} = ∫Q(t)dt / H_{{eff}} = λ_{{eff}} · W_{{q}}) en las {n_off} × 7 corridas tanto en paralelo "
         f"como en JSQ, obteniendo un residuo máximo de {little_max:.2e}, menor a 10^{{-10}}. En la calibración frente a las proporciones objetivo "
         f"(25 / 20 / 27.5 / 27.5 %) el MAE fue de {mae_pp:.2f} puntos porcentuales, la prueba de bondad de ajuste dio χ^{{2}} = {chi2_st:.3f} (gl = 3, "
         f"p = {chi2_pv:.3f} > 0.05) y el error relativo máximo de servicio fue de {srv_err:.2f} %, idéntico entre políticas bajo CRN."
     )
     add_p(
-        f"En la validación estadística bilateral con α = 0.05 frente a las fórmulas exactas M/G/1 (Tabla 7 y Figura 5), los siete escenarios aprueban tanto "
-        f"en las jornadas de 1000 minutos tras el corte MSER-5 (p ∈ [{p_min_mg1:.3f}, {p_max_mg1:.3f}]) como en corridas dedicadas de 5000 minutos con 80 "
-        f"réplicas quitando los primeros 1000 minutos iniciales (p ∈ [{p_min_5k:.3f}, {p_max_5k:.3f}])."
+        f"En la validación estadística bilateral con α = 0.05 frente a las fórmulas exactas M/G/1 (Tabla 7 y Figura 5), en los siete escenarios no se rechaza "
+        f"la igualdad con el valor teórico M/G/1 (H_{{0}}) tanto en las jornadas de 1000 minutos tras el corte MSER-5 (p ∈ [{p_min_mg1:.3f}, {p_max_mg1:.3f}]) "
+        f"como en corridas dedicadas de 5000 minutos con 80 réplicas quitando los primeros 1000 minutos iniciales (p ∈ [{p_min_5k:.3f}, {p_max_5k:.3f}])."
     )
 
     tbl7_data = []
@@ -1051,7 +1050,7 @@ def build_document(output_filename: str = None) -> None:
         "fig5_proceso_vv_diagrama.png",
         "Figura 5",
         "Diagrama metodológico del proceso V&V y validación estadística frente a Pollaczek–Khinchine M/G/1",
-        f"Panel A detalla Verificación (25 pruebas y residuo Little |∫Q(t)dt/H - λWq| en {n_off}×7 réplicas), Calibración y Validación (1000m MSER-5 y 5000m); Panel B prueba p > 0.05 en los 7 escenarios.",
+        f"Panel A detalla Verificación (25 pruebas y residuo Little |∫Q(t)dt/H - λWq| en {n_off}×7 réplicas), Calibración y Validación (1000m MSER-5 y 5000m); Panel B muestra p > 0.05 (no se rechaza H_{{0}}) en los 7 escenarios.",
         width_in=6.35,
     )
 
@@ -1113,11 +1112,13 @@ def build_document(output_filename: str = None) -> None:
     c1w = df_warm_c1.set_index("cajero")
     c1_sub_min = float(df_warm_c1["sesgo_subestimacion_pct"].min())
     c1_sub_max = float(df_warm_c1["sesgo_subestimacion_pct"].max())
+    c1_inc_min = float(df_warm_c1["incremento_wq_pct"].min())
+    c1_inc_max = float(df_warm_c1["incremento_wq_pct"].max())
     add_p(
         f"En el escenario base E1 de tres mixtos, el corte queda en d^{{*}} = {d_cut_e1} (k^{{*}} = {k_cut_e1} vehículos, cerca de {t_cut_e1:.1f} minutos). Al "
         f"descartar los primeros {k_cut_e1 - 1} arribos la espera W_{{q}} sube un +{incr_e1:.2f} %, pasando de {wq_e1:.2f} a {wq_ss_e1:.2f} minutos y "
         f"convergiendo hacia el valor analítico M/G/1 de {wq_mg1_e1:.2f} minutos (p = {p_mg1_e1:.3f}), lo que deja ver una subestimación inicial del "
-        f"{sesgo_e1:.2f} %. En los cajeros individuales de E1 el ajuste va de {c1_sub_min:.2f} % a {c1_sub_max:.2f} %: el Cajero 1 pasa de "
+        f"{sesgo_e1:.2f} %. En los cajeros individuales de E1 la subestimación va de {c1_sub_min:.2f} % a {c1_sub_max:.2f} % (incremento de {c1_inc_min:.2f} % a {c1_inc_max:.2f} %): el Cajero 1 pasa de "
         f"{c1w.loc['Cajero 1', 'wq_con_transitorio_min']:.2f} a {c1w.loc['Cajero 1', 'wq_estado_estable_min']:.2f} minutos, el Cajero 2 de "
         f"{c1w.loc['Cajero 2', 'wq_con_transitorio_min']:.2f} a {c1w.loc['Cajero 2', 'wq_estado_estable_min']:.2f} minutos y el Cajero 3 de "
         f"{c1w.loc['Cajero 3', 'wq_con_transitorio_min']:.2f} a {c1w.loc['Cajero 3', 'wq_estado_estable_min']:.2f} minutos. En los demás escenarios "
@@ -1227,7 +1228,7 @@ def build_document(output_filename: str = None) -> None:
         "Estabilidad muestral N* y simetría entre cajeros (Punto A): ",
         f"Con la regla secuencial causal de Law y Kelton trabajamos con N^{{*}} = {n_off} réplicas, logrando ER(W_{{q}}) = {er_wq_e1:.2f} % y ER(W) = "
         f"{er_w_e1:.2f} %. Aunque en la muestra el {c_min_w['cajero']} marcó {c_min_w['atencion_w_prom']:.3f} minutos y el {c_max_w['cajero']} llegó a "
-        f"{c_max_w['atencion_w_prom']:.3f} minutos (con servicio global cercano a {s_e1:.3f} minutos), las pruebas pareadas dan p ≥ {p_sym_min:.2f} y "
+        f"{c_max_w['atencion_w_prom']:.3f} minutos (con servicio global cercano a {s_e1:.3f} minutos), las pruebas pareadas dan p ≥ {p_sym_min:.3f} y "
         f"confirman que los tres cajeros trabajan de forma simétrica.",
     )
     add_numbered_item(
@@ -1244,13 +1245,13 @@ def build_document(output_filename: str = None) -> None:
         f"Se descartan las filas segregadas (E5 y E6) por pérdida de consolidación y también el escenario E4 de seis mixtos por resultar REDUNDANTE con "
         f"{ocio_e4:.1f} % de tiempo ocioso. La mejor opción es E7 (cuatro cajeros mixtos con lectura automática LPR/QR), que baja la espera a {wq_e7:.2f} "
         f"minutos (W = {w_e7:.2f} minutos), cae a {wq_e7_jsq:.2f} minutos con señalización JSQ ({p5_e7_jsq:.1f} % sobre cinco minutos) o a {wq_e7_mgc:.2f} "
-        f"minutos con cola única M/G/c, y aguanta un aumento de +20 % en demanda pico con menor CAPEX y OPEX.",
+        f"minutos con cola única M/G/c, y, con señalización JSQ, aguanta un aumento de +20 % en demanda pico (W_{{q}} = {float(pk_e7_jsq['espera_wq_media_min']):.2f} min) con menor CAPEX y OPEX.",
     )
     add_numbered_item(
         "5.",
         "Verificación, validación y ajuste MSER-5 (Puntos D y E): ",
         f"El modelo pasó 25 pruebas unitarias, la auditoría continua de Little con residuo menor a 10^{{-10}}, la calibración χ^{{2}} con p = {chi2_pv:.3f} "
-        f"y las pruebas t frente a M/G/1 tanto a 1000 minutos (p ∈ [{p_min_mg1:.3f}, {p_max_mg1:.3f}]) como a 5000 minutos "
+        f"y las pruebas t bilaterales frente a M/G/1 (sin rechazar H_{{0}}, α = 0.05) tanto a 1000 minutos (p ∈ [{p_min_mg1:.3f}, {p_max_mg1:.3f}]) como a 5000 minutos "
         f"(p ∈ [{p_min_5k:.3f}, {p_max_5k:.3f}]). Aplicar el corte MSER-5 en E1 tras k^{{*}} = {k_cut_e1} vehículos corrige la subestimación inicial del "
         f"{sesgo_e1:.2f} % (incremento real de +{incr_e1:.2f} %).",
     )
@@ -1272,7 +1273,7 @@ def build_document(output_filename: str = None) -> None:
         [("Law, A. M. (2015). ", False), ("Simulation modeling and analysis", True), (" (5th ed.). McGraw-Hill Education.", False)],
         [("Little, J. D. C. (1961). A proof for the queuing formula: L = λ W. ", False), ("Operations Research, 9", True), ("(3), 383–387. https://doi.org/10.1287/opre.9.3.383", False)],
         [("Ross, S. M. (2014). ", False), ("Introduction to probability models", True), (" (11th ed.). Academic Press.", False)],
-        [("White, K. P. (1997). An effective truncation heuristic for bias reduction in simulation output. ", False), ("Simulation, 69", True), ("(6), 323–334.", False)],
+        [("White, K. P. (1997). An effective truncation heuristic for bias reduction in simulation output. ", False), ("Simulation, 69", True), ("(6), 323–334. https://doi.org/10.1177/003754979706900601", False)],
     ]
     for ref_parts in referencias_apa7:
         pr = doc.add_paragraph()
@@ -1295,7 +1296,7 @@ def build_document(output_filename: str = None) -> None:
         space_after=4.0,
     )
     tree = [
-        "Actividad 4 - simulacion/",
+        "Simulacion-Parqueadero-Supercentro-MM1/",
         "  parking_queue/",
         "    __init__.py ............. <- Exportación pública del paquete",
         "    model.py ................ <- M/M/1, M/H4/1, SeedSequence, H4 arrivals y regímenes",
@@ -1312,13 +1313,13 @@ def build_document(output_filename: str = None) -> None:
         "  Palacios_Camilo_problemaParqueadero.docx       <- Informe oficial APA 7",
         "  GUION_VIDEO_SUSTENTACION.md, README.md, requirements.txt, LICENSE",
     ]
-    pt = doc.add_paragraph()
-    pt.paragraph_format.left_indent = Inches(0.18)
-    pt.paragraph_format.space_after = Pt(5)
-    pt.paragraph_format.line_spacing = 1.03
     for idx_t, line in enumerate(tree):
-        suffix = "\n" if idx_t < len(tree) - 1 else ""
-        rl = pt.add_run(f"{line}{suffix}")
+        pt = doc.add_paragraph()
+        pt.paragraph_format.left_indent = Inches(0.18)
+        pt.paragraph_format.space_before = Pt(0)
+        pt.paragraph_format.space_after = Pt(5 if idx_t == len(tree) - 1 else 0.5)
+        pt.paragraph_format.line_spacing = 1.03
+        rl = pt.add_run(line)
         rl.font.name = "Consolas"
         rl.font.size = Pt(7.6)
         rl.font.color.rgb = COLOR_PRIMARY
@@ -1338,8 +1339,9 @@ def build_document(output_filename: str = None) -> None:
 
     add_h1("Anexo C: Declaración de Uso Ético de IA y Bitácora Usa–Modifica–Crea")
     add_p(
-        "En coherencia con el marco ético institucional de la asignatura, declaramos el apoyo de herramientas de inteligencia artificial y "
-        "auditoría automatizada Elephant–Goldfish bajo supervisión técnica integral del Grupo 25:"
+        "En coherencia con el marco ético institucional de la asignatura, declaramos el apoyo de herramientas de inteligencia artificial generativa "
+        "para codificación auxiliar en Python, depuración de pruebas, estructuración gráfica y verificación automatizada de consistencia, siempre bajo "
+        "diseño, validación matemática y revisión técnica por pares del Grupo 25:"
     )
     add_bullet(
         "Usa: ",
@@ -1355,6 +1357,11 @@ def build_document(output_filename: str = None) -> None:
         "desarrollamos el detector causal sin look-ahead de Law y Kelton (N*), la detección MSER-5 con Welch centrado (Punto E), el simulador "
         "comparativo paralelo/JSQ/cola única M/G/c, el análisis de sensibilidad H4/H4/1–UX–Pico+20 %, los contrastes pareados CRN, la suite "
         "de 25 pruebas unitarias de invariantes y la verificación cruzada en create_colab_notebook.py contra los CSVs oficiales.",
+    )
+    add_bullet(
+        "Responsabilidad y validación del equipo: ",
+        "el Grupo 25 definió el modelado M/M/1 y M/H4/1, estableció los cinco criterios cuantitativos de decisión y escenarios de mejora, verificó "
+        "manualmente las fórmulas analíticas y salidas CSV frente al cuaderno Colab y el informe, y validó por pares la interpretación final y su sustentación.",
     )
 
     saved_path = output_filename

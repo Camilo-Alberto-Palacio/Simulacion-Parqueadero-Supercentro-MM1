@@ -43,7 +43,7 @@
 > **[0:42 – 1:15] FASE 3: PUNTOS A Y B — CAJEROS Y USUARIOS POR TIPO (33 segundos)**  
 > *(En pantalla: `results/fig2_desempeno_cajeros_base.png` y `results/fig3_usuarios_por_tipo.png`)*  
 >  
-> *"En el **Punto A**, evaluando 220 jornadas con ruteo equiprobable 1/3, el **Cajero 1** registró el menor promedio muestral (**17.83 min**, $W_q = 14.24\text{ min}$), el **Cajero 2** marcó **17.97 min** y el **Cajero 3** cerró con **18.70 min** ($W_q = 15.10\text{ min}$), con servicio cercano a **3.59–3.60 min** y simetría estadística verificada ($p \ge 0.37$). En el **Punto B**, ingresan **645.88 vehículos por jornada** (**161.92** rápidos, **128.89** normales, **177.65** lentos y **177.41** muy lentos): aunque lentos y muy lentos suman **55 %** en visitas, absorben el **76.4 %** de la carga teórica de servicio."*
+> *"En el **Punto A**, evaluando 220 jornadas con ruteo equiprobable 1/3, el **Cajero 1** registró el menor promedio muestral (**17.83 min**, $W_q = 14.24\text{ min}$), el **Cajero 2** marcó **17.97 min** y el **Cajero 3** cerró con **18.70 min** ($W_q = 15.10\text{ min}$), con servicio cercano a **3.59–3.60 min** y simetría estadística verificada ($p \ge 0.367$). En el **Punto B**, ingresan **645.88 vehículos por jornada** (**161.92** rápidos, **128.89** normales, **177.65** lentos y **177.41** muy lentos): aunque lentos y muy lentos suman **55 %** en visitas, absorben el **76.4 %** de la carga teórica de servicio."*
 
 ---
 
@@ -57,7 +57,7 @@
 > **[1:48 – 2:20] FASE 5: PUNTOS D Y E — PROTOCOLO V&V Y ELIMINACIÓN DEL TRANSITORIO (32 segundos)**  
 > *(En pantalla: `results/fig5_proceso_vv_diagrama.png` y `results/fig6_eliminacion_transitorio_antes_despues.png`)*  
 >  
-> *"En el **Punto D**, auditamos **Verificación, Calibración y Validación (V&V)**: **25 pruebas unitarias** y residuo continuo de Little ($|\frac{1}{H_{\text{eff}}}\int Q(t)dt - \lambda_{\text{eff}}W_q| \le 1.6\times 10^{-14} < 10^{-10}$); calibración con **MAE de 0.04 puntos porcentuales** ($\chi^2 = 0.470, p = 0.925$); y pruebas *t* frente a M/G/1 superadas a 1000 minutos ($p \in [0.361, 0.949]$) y **5000 minutos** ($p \in [0.099, 0.637]$). En el **Punto E**, **MSER-5** detecta el corte base en **`k* = 176` vehículos** (~271 min), elevando $W_q$ **+9.0 %** de **14.73 a 16.05 min** (subestimación inicial de **8.2 %**) hacia **15.57 min** teóricos."*
+> *"En el **Punto D**, auditamos **Verificación, Calibración y Validación (V&V)**: **25 pruebas unitarias** y residuo continuo de Little ($|\frac{1}{H_{\text{eff}}}\int Q(t)dt - \lambda_{\text{eff}}W_q| \le 1.6\times 10^{-14} < 10^{-10}$); calibración con **MAE de 0.04 puntos porcentuales** ($\chi^2 = 0.470, p = 0.925$); y pruebas *t* frente a M/G/1 sin rechazar $H_0$ a 1000 minutos ($p \in [0.361, 0.949]$) y **5000 minutos** ($p \in [0.099, 0.637]$). En el **Punto E**, **MSER-5** detecta el corte base en **`k* = 176` vehículos** (~271 min), elevando $W_q$ **+9.0 %** de **14.73 a 16.05 min** (subestimación inicial de **8.2 %**) hacia **15.57 min** teóricos."*
 
 ---
 
