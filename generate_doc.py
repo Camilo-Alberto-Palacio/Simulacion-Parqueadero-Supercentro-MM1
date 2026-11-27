@@ -1329,8 +1329,8 @@ def build_document(output_filename: str = None) -> None:
     p_vid.paragraph_format.left_indent = Inches(0.20)
     p_vid.paragraph_format.space_after = Pt(4)
     p_vid.paragraph_format.line_spacing = 1.1
-    add_rich_runs(p_vid, "Enlace del video (2:30 min): ", font_size=9.8, color=COLOR_PRIMARY, bold=True)
-    add_rich_runs(p_vid, "[Pendiente insertar enlace YouTube tras grabación]", font_name="Consolas", font_size=8.8, color=COLOR_SECONDARY, bold=True)
+    add_rich_runs(p_vid, "Enlace del video (2:33 min): ", font_size=9.8, color=COLOR_PRIMARY, bold=True)
+    add_rich_runs(p_vid, "https://youtu.be/ix6PkWOdiRA", font_name="Consolas", font_size=8.8, color=COLOR_SECONDARY, bold=True)
     add_p(
         f"El libreto cronometrado en GUION_VIDEO_SUSTENTACION.md resume la transición M/M/1 a M/H4/1, la detección causal Law y Kelton (N^{{*}} = {n_off} "
         f"réplicas), Puntos A y B, la estrategia 4 Mixtos + UX/LPR con JSQ y cola única M/G/c (Punto C), V&V con 5000 min (Punto D) y MSER-5 tras "

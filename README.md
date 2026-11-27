@@ -1,6 +1,7 @@
 # Simulación de Colas M/M/1 y M/H4/1 (M/G/1) — Parqueaderos Centro Comercial Supercentro
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Camilo-Alberto-Palacio/Simulacion-Parqueadero-Supercentro-MM1/blob/main/Simulacion_Parqueadero_Supercentro_Colab.ipynb)
+[![Video Pitch YouTube](https://img.shields.io/badge/YouTube-Video%20de%20Sustentaci%C3%B3n%20(2%3A33)-FF0000?logo=youtube&logoColor=white)](https://youtu.be/ix6PkWOdiRA)
 ![Python Version](https://img.shields.io/badge/Python-3.10%2B-blue.svg)
 ![Tests](https://img.shields.io/badge/Tests-25%2F25%20Passing-brightgreen.svg)
 ![Replicas](https://img.shields.io/badge/Estado%20Estable-N*%20%3D%20220%20R%C3%A9plicas-1E3A8A.svg)
@@ -213,6 +214,7 @@ En las variantes especializadas se separa explícitamente a los usuarios por vel
 **Asignatura:** Simulación — `PREICA2602B020045`  
 **Institución:** Institución Universitaria Digital de Antioquia (IU Digital) — Facultad de Ingeniería  
 **Sede y Fecha:** Medellín, Antioquia · Noviembre de 2026  
+**Video de Sustentación (YouTube, 2:33 min):** [Ver pitch oficial en YouTube](https://youtu.be/ix6PkWOdiRA) (`https://youtu.be/ix6PkWOdiRA`)  
 **Bitácora Ética de IA (*Usa–Modifica–Crea*):** documentada íntegramente en el **Anexo C** de [`Palacios_Camilo_problemaParqueadero.docx`](Palacios_Camilo_problemaParqueadero.docx) y en la **Sección 6** de [`Simulacion_Parqueadero_Supercentro_Colab.ipynb`](Simulacion_Parqueadero_Supercentro_Colab.ipynb).
 
 ---
